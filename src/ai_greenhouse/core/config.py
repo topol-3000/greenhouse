@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Literal, Self
+from typing import Literal
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,11 +38,6 @@ class Settings(BaseSettings):
 
     def database_url_value(self) -> str:
         return self.database_url.get_secret_value()
-
-    @classmethod
-    def for_test(cls, database_url: str, **overrides: object) -> Self:
-        """Create settings explicitly without relying on process environment."""
-        return cls(database_url=database_url, **overrides)
 
 
 @lru_cache

@@ -1,11 +1,15 @@
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
 
 from ai_greenhouse.core.config import Settings
 
+DATABASE_URL = "postgresql+asyncpg://user:password@postgres:5432/greenhouse"
 
-def test_settings_use_documented_defaults() -> None:
-    settings = Settings.for_test("postgresql+asyncpg://user:password@postgres:5432/greenhouse")
+
+def test_settings_use_documented_defaults(build_settings: Callable[..., Settings]) -> None:
+    settings = build_settings(DATABASE_URL)
 
     assert settings.app_name == "ai-greenhouse-api"
     assert settings.app_env == "local"
@@ -14,9 +18,9 @@ def test_settings_use_documented_defaults() -> None:
     assert settings.log_level == "INFO"
 
 
-def test_settings_support_explicit_overrides() -> None:
-    settings = Settings.for_test(
-        "postgresql+asyncpg://user:password@postgres:5432/greenhouse",
+def test_settings_support_explicit_overrides(build_settings: Callable[..., Settings]) -> None:
+    settings = build_settings(
+        DATABASE_URL,
         app_name="test-greenhouse",
         app_env="test",
         app_host="127.0.0.1",
@@ -31,16 +35,14 @@ def test_settings_support_explicit_overrides() -> None:
     assert settings.log_level == "DEBUG"
 
 
-def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-
+def test_database_url_is_required(isolated_environment: None) -> None:
     with pytest.raises(ValidationError, match="database_url"):
         Settings(_env_file=None)
 
 
-def test_database_url_is_secret_safe() -> None:
+def test_database_url_is_secret_safe(build_settings: Callable[..., Settings]) -> None:
     database_url = "postgresql+asyncpg://user:top-secret@postgres:5432/greenhouse"
-    settings = Settings.for_test(database_url)
+    settings = build_settings(database_url)
 
     assert database_url not in repr(settings)
     assert "top-secret" not in repr(settings)

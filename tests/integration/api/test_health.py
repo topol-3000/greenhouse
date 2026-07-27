@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from io import StringIO
 
 import httpx
@@ -51,9 +52,11 @@ async def test_health_reports_postgresql_18_and_applied_baseline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_failure_is_safe_and_logged_as_json() -> None:
+async def test_health_failure_is_safe_and_logged_as_json(
+    build_settings: Callable[..., Settings],
+) -> None:
     database_url = "postgresql+asyncpg://test_user:top-secret@test-db:5432/test"
-    settings = Settings.for_test(database_url, app_env="test")
+    settings = build_settings(database_url, app_env="test")
     app = create_app(settings)
     log_output = StringIO()
     configure_logging(settings, stream=log_output)
