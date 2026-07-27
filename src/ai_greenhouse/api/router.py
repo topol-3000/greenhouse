@@ -8,6 +8,7 @@ their endpoints on.
 from fastapi import APIRouter
 
 from ai_greenhouse.api.routes.health import router as health_router
+from ai_greenhouse.api.routes.sites import router as sites_router
 
 API_V1_PREFIX: str = "/api/v1"
 
@@ -17,6 +18,7 @@ root_router.include_router(health_router)
 api_v1_router: APIRouter = APIRouter(prefix=API_V1_PREFIX)
 """Versioned router for domain endpoints.
 
-Empty until the entity stories mount their routers here. ``GET /health`` stays
-on ``root_router`` and is not duplicated under the prefix.
+Entity stories mount their routers here. ``GET /health`` stays on
+``root_router`` and is not duplicated under the prefix.
 """
+api_v1_router.include_router(sites_router)

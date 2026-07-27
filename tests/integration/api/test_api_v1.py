@@ -42,11 +42,27 @@ def test_versioned_prefix() -> None:
     assert api_v1_router.prefix == API_V1_PREFIX
 
 
-def test_versioned_router_carries_no_domain_routes_in_this_story(settings: Settings) -> None:
+def test_domain_routes_are_mounted_under_the_versioned_prefix(settings: Settings) -> None:
     app = create_app(settings)
 
-    mounted = {getattr(route, "path", "") for route in app.routes}
-    assert not [path for path in mounted if path.startswith(API_V1_PREFIX)]
+    # ``app.routes`` holds lazy ``_IncludedRouter`` entries without a ``path``,
+    # so the generated schema is what actually reflects the mounted contract.
+    paths = app.openapi()["paths"]
+
+    assert set(paths[f"{API_V1_PREFIX}/sites"]) == {"get", "post"}
+    assert set(paths[f"{API_V1_PREFIX}/sites/{{site_id}}"]) == {"get", "patch"}
+
+
+def test_no_domain_route_escapes_the_versioned_prefix(settings: Settings) -> None:
+    app = create_app(settings)
+
+    unversioned = [
+        path
+        for path in app.openapi()["paths"]
+        if not path.startswith(API_V1_PREFIX) and path != "/health"
+    ]
+
+    assert unversioned == [], "only /health lives outside /api/v1"
 
 
 async def test_versioned_router_is_mounted(
