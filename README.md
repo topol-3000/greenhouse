@@ -1,12 +1,13 @@
 # AI Greenhouse
 
 AI Greenhouse is a modular-monolith backend for incrementally building greenhouse
-automation scenarios. Milestone 0 provides only the runnable technical foundation:
+automation scenarios. Milestone 0 provided the runnable technical foundation:
 FastAPI, PostgreSQL, migrations, configuration, structured logging, and a
-database-aware health endpoint.
+database-aware health endpoint. Milestone 1 adds the topology, starting with the
+`Site` entity.
 
-The runtime is Python 3.14 with PostgreSQL 18. No greenhouse domain entities,
-CRUD APIs, authentication, telemetry, simulation, or frontend are included yet.
+The runtime is Python 3.14 with PostgreSQL 18. Authentication, telemetry,
+simulation and frontend are not included yet.
 
 ## Prerequisites
 
@@ -63,6 +64,75 @@ If PostgreSQL cannot execute the health query, the endpoint returns HTTP 503 wit
 
 The response never includes connection strings, credentials, exception details,
 or stack traces. Technical failure context is written to secret-redacted JSON logs.
+
+## Sites API
+
+A site is a physical location and the root of the topology. All domain
+endpoints live under `/api/v1`.
+
+```http
+POST   /api/v1/sites
+GET    /api/v1/sites?status=&limit=&offset=
+GET    /api/v1/sites/{site_id}
+PATCH  /api/v1/sites/{site_id}
+```
+
+Create a site:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/sites \
+  -H 'content-type: application/json' \
+  -d '{"name": "Home", "code": "home", "timezone": "Europe/Kiev"}'
+```
+
+```json
+{
+  "id": "571fce69-8221-4b5c-8284-728854f2a451",
+  "name": "Home",
+  "code": "home",
+  "timezone": "Europe/Kiev",
+  "status": "active",
+  "created_at": "2026-07-27T21:47:59.246859Z",
+  "updated_at": "2026-07-27T21:47:59.246863Z"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `code` is a slug matching `^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$`, unique
+  across all sites, and fixed once the site exists;
+- `timezone` must be a valid IANA name and defaults to `UTC`;
+- `name` is stripped and must be 1–200 characters afterwards;
+- `PATCH` accepts `name`, `timezone` and `status` only;
+- there is no `DELETE`. A site is retired with `PATCH {"status": "archived"}`
+  and stays readable by id.
+
+Collections come back in a paginated envelope ordered by `created_at ASC,
+id ASC`, with `limit` defaulting to 50 and capped at 200:
+
+```json
+{"items": [], "total": 0, "limit": 50, "offset": 0}
+```
+
+Every failure uses one envelope, and never carries SQL, driver messages or
+stack traces:
+
+```json
+{
+  "error": {
+    "code": "site_code_conflict",
+    "message": "Site code already exists",
+    "details": {"code": "home"}
+  }
+}
+```
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body | 422 | `validation_error` |
+| Site does not exist | 404 | `site_not_found` |
+| `code` already taken | 409 | `site_code_conflict` |
+| `PATCH` names `code` | 409 | `immutable_field` |
 
 ## Configuration
 
@@ -131,10 +201,22 @@ docker compose up --build
 ```text
 src/ai_greenhouse/
 ├── api/                 # HTTP routes and dependencies
-├── core/                # Settings and logging
+├── core/                # Settings, logging, shared value types and exceptions
+├── topology/            # Site: models, schemas, repository, service
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```
 
-Alembic is the only supported schema-change mechanism. The initial migration
-establishes the revision chain without creating domain tables.
+Each domain module keeps the same split: `routes/` handles HTTP only,
+`service.py` holds the invariants, `repository.py` holds the SQLAlchemy
+queries, and `exceptions.py` holds domain failures that know nothing about
+HTTP. No SQL reaches the route layer and no FastAPI import reaches the service
+layer.
+
+Alembic is the only supported schema-change mechanism; `metadata.create_all()`
+is not used, in the tests either. A new module's `models.py` must be imported
+in [`migrations/env.py`](migrations/env.py), otherwise autogenerate and
+`alembic check` compare against metadata that does not know the table.
+
+Integration tests run against a real PostgreSQL instance, migrate through
+Alembic, and isolate each test by rolling back a surrounding transaction.
