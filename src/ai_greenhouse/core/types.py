@@ -8,12 +8,12 @@ from typing import Annotated
 
 from pydantic import StringConstraints
 
-CODE_PATTERN = r"^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$"
+CODE_PATTERN: str = r"^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$"
 """Slug: lowercase, starts and ends alphanumeric, 1-63 characters."""
 
-MAX_CODE_LENGTH = 63
-MIN_NAME_LENGTH = 1
-MAX_NAME_LENGTH = 200
+MAX_CODE_LENGTH: int = 63
+MIN_NAME_LENGTH: int = 1
+MAX_NAME_LENGTH: int = 200
 
 CodeStr = Annotated[
     str,

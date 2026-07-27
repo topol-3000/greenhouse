@@ -18,12 +18,12 @@ from fastapi.responses import JSONResponse
 
 from ai_greenhouse.core.exceptions import DomainError
 
-logger = structlog.get_logger(__name__)
+logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
-VALIDATION_ERROR_CODE = "validation_error"
-VALIDATION_ERROR_MESSAGE = "Request validation failed"
-INTERNAL_ERROR_CODE = "internal_error"
-INTERNAL_ERROR_MESSAGE = "Internal server error"
+VALIDATION_ERROR_CODE: str = "validation_error"
+VALIDATION_ERROR_MESSAGE: str = "Request validation failed"
+INTERNAL_ERROR_CODE: str = "internal_error"
+INTERNAL_ERROR_MESSAGE: str = "Internal server error"
 
 
 def error_body(
@@ -31,12 +31,29 @@ def error_body(
     message: str,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the error envelope."""
+    """Build the error envelope.
+
+    Args:
+        code: Machine-readable error code.
+        message: Human-readable description of the failure.
+        details: Structured context safe to expose to API clients.
+
+    Returns:
+        The ``{"error": {...}}`` envelope shared by every error response.
+    """
     return {"error": {"code": code, "message": message, "details": details or {}}}
 
 
 async def handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
-    """Report a domain failure with the status declared by the exception."""
+    """Report a domain failure with the status declared by the exception.
+
+    Args:
+        request: The request being handled, used for log context.
+        exc: The raised domain failure.
+
+    Returns:
+        A ``JSONResponse`` carrying the error envelope and ``exc.http_status``.
+    """
     logger.info(
         "domain_error",
         error_code=exc.code,
@@ -58,8 +75,15 @@ async def handle_validation_error(
 
     Only the location, message and type of each failure are echoed. The
     submitted input is left out so a malformed body cannot be reflected back.
+
+    Args:
+        request: The request being handled, used for log context.
+        exc: The validation failure raised by FastAPI/Pydantic.
+
+    Returns:
+        A ``JSONResponse`` with HTTP 422 and ``error.code = "validation_error"``.
     """
-    failures = [
+    failures: list[dict[str, Any]] = [
         {
             "location": [str(part) for part in failure["loc"]],
             "message": failure["msg"],
@@ -84,7 +108,16 @@ async def handle_validation_error(
 
 
 async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    """Report a defect as a generic 500 and log the exception in full."""
+    """Report a defect as a generic 500 and log the exception in full.
+
+    Args:
+        request: The request being handled, used for log context.
+        exc: The unhandled exception. Logged in full server-side; never
+            reflected into the response body.
+
+    Returns:
+        A ``JSONResponse`` with HTTP 500 and a generic message.
+    """
     logger.exception(
         "unhandled_exception",
         method=request.method,
@@ -98,7 +131,11 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
 
 
 def register_exception_handlers(application: FastAPI) -> None:
-    """Install the handlers that produce the error envelope."""
+    """Install the handlers that produce the error envelope.
+
+    Args:
+        application: The FastAPI app to register handlers on.
+    """
     application.add_exception_handler(DomainError, handle_domain_error)
     application.add_exception_handler(RequestValidationError, handle_validation_error)
     application.add_exception_handler(Exception, handle_unexpected_error)
