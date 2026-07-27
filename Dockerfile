@@ -29,4 +29,3 @@ RUN chmod 0755 /usr/local/bin/entrypoint
 EXPOSE 8000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
-

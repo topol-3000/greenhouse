@@ -88,6 +88,7 @@ def configure_logging(settings: Settings, stream: TextIO | None = None) -> None:
         configured_logger = logging.getLogger(logger_name)
         configured_logger.handlers.clear()
         configured_logger.propagate = True
+    logging.getLogger("uvicorn.access").disabled = True
 
     structlog.configure(
         processors=[

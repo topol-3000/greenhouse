@@ -11,11 +11,11 @@ from ai_greenhouse.infrastructure.database.health import probe_database
 DatabaseHealthProbe = Callable[[], Awaitable[None]]
 
 
-def get_app_settings(request: Request) -> Settings:
+async def get_app_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
 
 
-def get_database_health_probe(request: Request) -> DatabaseHealthProbe:
+async def get_database_health_probe(request: Request) -> DatabaseHealthProbe:
     engine = cast(AsyncEngine, request.app.state.database_engine)
     return partial(probe_database, engine)
 
