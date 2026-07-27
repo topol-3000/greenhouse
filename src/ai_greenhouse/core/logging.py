@@ -69,6 +69,9 @@ def configure_logging(settings: Settings, stream: TextIO | None = None) -> None:
             structlog.stdlib.add_log_level,
             timestamper,
             static_context,
+            # Tracebacks must be rendered to text before scrubbing, otherwise
+            # secrets stay hidden inside an unscrubbable exc_info tuple.
+            structlog.processors.format_exc_info,
             secret_scrubber,
         ],
         processors=[
