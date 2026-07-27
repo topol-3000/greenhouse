@@ -21,7 +21,14 @@ __all__ = [
 
 
 class DomainError(Exception):
-    """Base class for failures caused by domain rules rather than by defects."""
+    """Base class for failures caused by domain rules rather than by defects.
+
+    Attributes:
+        code: Machine-readable error code returned in the API envelope.
+        http_status: HTTP status translated by ``ai_greenhouse.api.errors``.
+        message: Human-readable description of the failure.
+        details: Structured context safe to expose to API clients.
+    """
 
     code: str = "domain_error"
     http_status: int = 500
@@ -33,8 +40,15 @@ class DomainError(Exception):
         code: str | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
+        """Create a domain failure.
+
+        Args:
+            message: Human-readable description of the failure.
+            code: Overrides the class-level ``code`` default, if given.
+            details: Structured context merged into the error envelope.
+        """
         super().__init__(message)
-        self.message = message
+        self.message: str = message
         self.details: dict[str, Any] = dict(details or {})
         if code is not None:
             self.code = code
