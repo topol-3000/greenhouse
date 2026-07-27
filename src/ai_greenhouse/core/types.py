@@ -5,8 +5,9 @@ individual schemas, where they would drift apart.
 """
 
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import StringConstraints
+from pydantic import AfterValidator, StringConstraints
 
 CODE_PATTERN: str = r"^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$"
 """Slug: lowercase, starts and ends alphanumeric, 1-63 characters."""
@@ -14,6 +15,11 @@ CODE_PATTERN: str = r"^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$"
 MAX_CODE_LENGTH: int = 63
 MIN_NAME_LENGTH: int = 1
 MAX_NAME_LENGTH: int = 200
+MIN_TIMEZONE_LENGTH: int = 1
+MAX_TIMEZONE_LENGTH: int = 64
+
+DEFAULT_TIMEZONE: str = "UTC"
+"""Fallback timezone for entities that do not declare one."""
 
 CodeStr = Annotated[
     str,
@@ -30,3 +36,38 @@ NameStr = Annotated[
     ),
 ]
 """Human-readable label, stripped of surrounding whitespace."""
+
+
+def validate_iana_timezone(value: str) -> str:
+    """Reject anything the ``tzdata`` database does not know.
+
+    The name is resolved rather than matched against a pattern, so a
+    well-formed but non-existent zone such as ``Not/AZone`` is rejected too.
+
+    Args:
+        value: The candidate timezone name, for example ``Europe/Kiev``.
+
+    Returns:
+        The value unchanged, once it resolves to a known zone.
+
+    Raises:
+        ValueError: If the name is not a known IANA timezone. Pydantic turns
+            this into a validation failure, which the API reports as HTTP 422.
+    """
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ValueError(f"{value!r} is not a valid IANA timezone name") from error
+    return value
+
+
+TimezoneStr = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=MIN_TIMEZONE_LENGTH,
+        max_length=MAX_TIMEZONE_LENGTH,
+    ),
+    AfterValidator(validate_iana_timezone),
+]
+"""IANA timezone name, validated against the bundled ``tzdata`` database."""

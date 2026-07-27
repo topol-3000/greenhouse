@@ -1,9 +1,12 @@
 import json
 from collections.abc import Callable
 from io import StringIO
+from pathlib import Path
 
 import httpx
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -14,6 +17,15 @@ from ai_greenhouse.api.dependencies import (
 from ai_greenhouse.app import create_app
 from ai_greenhouse.core.config import Settings
 from ai_greenhouse.core.logging import configure_logging
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def alembic_head_revision() -> str:
+    """Return the latest revision, so adding a migration does not break this test."""
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+    return ScriptDirectory.from_config(config).get_current_head() or ""
 
 
 def integration_settings() -> Settings:
@@ -48,7 +60,7 @@ async def test_health_reports_postgresql_18_and_applied_baseline() -> None:
         "database": "ok",
     }
     assert str(server_version).startswith("18.")
-    assert migration_version == "20260727_0001"
+    assert migration_version == alembic_head_revision(), "the database must be at head"
 
 
 @pytest.mark.asyncio

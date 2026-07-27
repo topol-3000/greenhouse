@@ -8,6 +8,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from ai_greenhouse.core.config import get_settings
 from ai_greenhouse.infrastructure.database.metadata import metadata
 
+# Importing the domain models registers their tables on the shared metadata.
+# Without this, autogenerate and `alembic check` compare the database against
+# an empty metadata and report no changes. Every new module's models.py must be
+# added here.
+from ai_greenhouse.topology import models as topology_models  # noqa: F401
+
 config = context.config
 settings = get_settings()
 config.set_main_option(

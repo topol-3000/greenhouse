@@ -35,8 +35,12 @@ def test_base_is_bound_to_the_shared_metadata() -> None:
     assert Base.metadata is metadata
 
 
-def test_no_domain_table_is_registered_yet() -> None:
-    assert Base.metadata.tables == {}
+def test_domain_tables_register_themselves_on_the_shared_metadata() -> None:
+    import ai_greenhouse.topology.models  # noqa: F401
+
+    assert "sites" in Base.metadata.tables, (
+        "migrations autogenerate against this metadata; an unregistered table is invisible"
+    )
 
 
 def test_primary_key_is_a_uuid_generated_by_the_application() -> None:
