@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from ai_greenhouse.api.router import router
+from ai_greenhouse.api.errors import register_exception_handlers
+from ai_greenhouse.api.router import api_v1_router, root_router
 from ai_greenhouse.core.config import Settings, get_settings
 from ai_greenhouse.core.logging import RequestLoggingMiddleware, configure_logging
 from ai_greenhouse.infrastructure.database.engine import (
@@ -37,5 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.database_engine = database_engine
     application.state.session_factory = session_factory
     application.add_middleware(RequestLoggingMiddleware)
-    application.include_router(router)
+    register_exception_handlers(application)
+    application.include_router(root_router)
+    application.include_router(api_v1_router)
     return application
