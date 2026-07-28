@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ai_greenhouse.core.types import DEFAULT_TIMEZONE, CodeStr, NameStr, TimezoneStr
 from ai_greenhouse.infrastructure.database.base import StatusEnum
-from ai_greenhouse.topology.models import FacilityType
+from ai_greenhouse.topology.models import FacilityType, ZoneType
 
 
 class SiteCreate(BaseModel):
@@ -94,6 +94,61 @@ class FacilityRead(BaseModel):
     name: str
     code: str
     facility_type: FacilityType
+    status: StatusEnum
+    created_at: datetime
+    updated_at: datetime
+
+
+class ControlZoneCreate(BaseModel):
+    """Body accepted by ``POST /api/v1/control-zones``.
+
+    There is no ``site_id``: a zone reaches its site through its facility, and
+    accepting a second, redundant parent would make the two contradictable.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    facility_id: UUID
+    name: NameStr
+    code: CodeStr
+    zone_type: ZoneType
+
+
+class ControlZoneUpdate(BaseModel):
+    """Body accepted by ``PATCH /api/v1/control-zones/{zone_id}``.
+
+    Only the fields present in the request are applied, so an omitted field and
+    an explicit ``null`` both leave the stored value untouched.
+
+    ``code`` and ``facility_id`` are declared even though neither can be
+    changed. Accepting them here is what lets the service answer with a precise
+    HTTP 409 instead of the generic HTTP 422 that an unexpected field would
+    produce.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: NameStr | None = None
+    zone_type: ZoneType | None = None
+    status: StatusEnum | None = None
+    code: str | None = None
+    facility_id: UUID | None = None
+
+
+class ControlZoneRead(BaseModel):
+    """Representation of a control zone returned by every zone endpoint.
+
+    No ``site_id`` is exposed. Clients that need the site read it from the
+    zone's facility, which is the only place it is stored.
+    """
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    facility_id: UUID
+    name: str
+    code: str
+    zone_type: ZoneType
     status: StatusEnum
     created_at: datetime
     updated_at: datetime
