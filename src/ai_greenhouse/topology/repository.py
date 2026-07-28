@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.api.pagination import PageParams, paginate
 from ai_greenhouse.infrastructure.database.base import StatusEnum
-from ai_greenhouse.topology.models import Facility, FacilityType, Site
+from ai_greenhouse.topology.models import ControlZone, Facility, FacilityType, Site, ZoneType
 
 
 class SiteRepository:
@@ -171,3 +171,91 @@ class FacilityRepository:
         if status is not None:
             statement = statement.where(Facility.status == status)
         return await paginate(self._session, statement, Facility, params)
+
+
+class ControlZoneRepository:
+    """Queries over the ``control_zones`` table."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Bind the repository to the request-scoped session.
+
+        Args:
+            session: The session opened by ``get_session`` for this request.
+        """
+        self._session: AsyncSession = session
+
+    def add(self, control_zone: ControlZone) -> None:
+        """Stage a new control zone for insertion on the next flush.
+
+        Args:
+            control_zone: The instance to persist.
+        """
+        self._session.add(control_zone)
+
+    async def flush(self) -> None:
+        """Send pending changes to the database without committing.
+
+        The commit is owned by the ``get_session`` dependency, so flushing here
+        surfaces constraint violations while the caller can still translate
+        them into a domain failure.
+        """
+        await self._session.flush()
+
+    async def get_by_id(self, control_zone_id: UUID) -> ControlZone | None:
+        """Load a control zone by primary key.
+
+        Args:
+            control_zone_id: Identifier to look up.
+
+        Returns:
+            The matching zone, or ``None`` when no row exists.
+        """
+        return await self._session.get(ControlZone, control_zone_id)
+
+    async def get_by_code(self, facility_id: UUID, code: str) -> ControlZone | None:
+        """Load a control zone by its code within one facility.
+
+        Args:
+            facility_id: The facility the code is scoped to.
+            code: The slug to look up.
+
+        Returns:
+            The matching zone, or ``None`` when the code is free in that
+            facility. The same code in another facility is a different zone and
+            is not returned here.
+        """
+        return await self._session.scalar(
+            select(ControlZone).where(
+                ControlZone.facility_id == facility_id,
+                ControlZone.code == code,
+            )
+        )
+
+    async def list_page(
+        self,
+        params: PageParams,
+        *,
+        facility_id: UUID | None = None,
+        zone_type: ZoneType | None = None,
+        status: StatusEnum | None = None,
+    ) -> tuple[list[ControlZone], int]:
+        """Return one page of control zones together with the unpaged total.
+
+        Args:
+            params: The resolved ``limit``/``offset`` window.
+            facility_id: Restricts the result to one facility when given.
+            zone_type: Restricts the result to one kind of zone when given.
+            status: Restricts the result to one lifecycle state when given.
+
+        Returns:
+            A tuple of the page's zones, ordered by ``created_at ASC, id ASC``,
+            and the total number of zones matching the filters.
+        """
+        statement: Select[tuple[ControlZone]] = select(ControlZone)
+        if facility_id is not None:
+            statement = statement.where(ControlZone.facility_id == facility_id)
+        if zone_type is not None:
+            statement = statement.where(ControlZone.zone_type == zone_type)
+        if status is not None:
+            statement = statement.where(ControlZone.status == status)
+        return await paginate(self._session, statement, ControlZone, params)

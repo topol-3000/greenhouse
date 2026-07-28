@@ -194,6 +194,75 @@ Rules worth knowing before calling it:
 | `PATCH` names `code` | 409 | `immutable_field` |
 | `PATCH` names `site_id` | 409 | `facility_site_immutable` |
 
+## Control zones API
+
+A control zone is the part of a facility that is measured or controlled as one
+unit: a climate zone, an irrigation zone, a lighting zone. It is a boundary of
+*control*, not of physical space, so zones may overlap freely — including two
+zones of the same type in one facility.
+
+```http
+POST   /api/v1/control-zones
+GET    /api/v1/control-zones?facility_id=&zone_type=&status=&limit=&offset=
+GET    /api/v1/control-zones/{zone_id}
+PATCH  /api/v1/control-zones/{zone_id}
+```
+
+Create a control zone:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/control-zones \
+  -H 'content-type: application/json' \
+  -d '{"facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
+       "name": "Main Climate", "code": "main-climate",
+       "zone_type": "climate"}'
+```
+
+```json
+{
+  "id": "4c8f2a01-77b3-4e0d-8a51-3b6e0d9f1c22",
+  "facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
+  "name": "Main Climate",
+  "code": "main-climate",
+  "zone_type": "climate",
+  "status": "active",
+  "created_at": "2026-07-28T09:31:17.402118Z",
+  "updated_at": "2026-07-28T09:31:17.402121Z"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `zone_type` is one of `climate`, `irrigation`, `lighting`, `measurement`,
+  `nutrient_solution` and `safety`;
+- there is **no** `site_id`, in the request or in the response. A zone reaches
+  its site through its facility, which is what guarantees that a zone never
+  crosses a facility boundary;
+- `code` follows the same slug rule as a site, but is unique **within its
+  facility** only. Two facilities may each hold a `main-climate`;
+- overlapping zones are allowed on purpose. Two `climate` zones in one facility
+  are accepted; the conflict between them is resolved later by priority and
+  policy, which arrive with the control loops of Milestone 3;
+- a zone cannot be created inside an archived facility;
+- `PATCH` accepts `name`, `zone_type` and `status` only. A zone never moves
+  between facilities, because the points assigned to it are scoped by that
+  facility too;
+- there is no `DELETE`, and a facility that still has zones cannot be deleted at
+  the database level either (`ON DELETE RESTRICT`).
+
+Assigning points to a zone (`/api/v1/control-zones/{zone_id}/points`) arrives
+with Milestone 1.6.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unknown `zone_type` | 422 | `validation_error` |
+| `facility_id` references no facility | 422 | `facility_not_found` |
+| Control zone does not exist | 404 | `control_zone_not_found` |
+| `code` already taken in that facility | 409 | `control_zone_code_conflict` |
+| Facility is archived | 409 | `parent_archived` |
+| `PATCH` names `code` | 409 | `immutable_field` |
+| `PATCH` names `facility_id` | 409 | `zone_facility_immutable` |
+
 ## Configuration
 
 | Variable | Default | Required |
