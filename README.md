@@ -263,6 +263,123 @@ with Milestone 1.6.
 | `PATCH` names `code` | 409 | `immutable_field` |
 | `PATCH` names `facility_id` | 409 | `zone_facility_immutable` |
 
+## Points API
+
+A point is the stable logical identity of a value: air temperature, fan power,
+pump running. It carries the *meaning* of the value and deliberately nothing
+about where that value comes from — no device, no channel, no GPIO pin, no
+Modbus register. When a sensor is replaced in Milestone 6, its binding changes
+and the point, its history and every rule referring to it do not.
+
+```http
+POST   /api/v1/points
+GET    /api/v1/points?site_id=&facility_id=&point_kind=&metric_type=&status=&limit=&offset=
+GET    /api/v1/points/{point_id}
+PATCH  /api/v1/points/{point_id}
+GET    /api/v1/points/{point_id}/state
+```
+
+Create a point:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/points \
+  -H 'content-type: application/json' \
+  -d '{"site_id": "0f9c4b2e-1d3a-4c58-9b77-2e6a1f0c8d34",
+       "facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
+       "code": "air_temperature", "name": "Air temperature",
+       "point_kind": "measurement", "metric_type": "air_temperature",
+       "data_type": "float", "unit": "°C",
+       "min_value": -20, "max_value": 60}'
+```
+
+```json
+{
+  "id": "b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40",
+  "site_id": "0f9c4b2e-1d3a-4c58-9b77-2e6a1f0c8d34",
+  "facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
+  "code": "air_temperature",
+  "name": "Air temperature",
+  "point_kind": "measurement",
+  "metric_type": "air_temperature",
+  "data_type": "float",
+  "unit": "°C",
+  "min_value": -20.0,
+  "max_value": 60.0,
+  "status": "active",
+  "created_at": "2026-07-28T09:44:02.118374Z",
+  "updated_at": "2026-07-28T09:44:02.118376Z"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `point_kind` is one of `measurement`, `control`, `status` and `derived`. A
+  `derived` point is accepted, but nothing computes one until a later
+  milestone;
+- `data_type` is one of `float`, `integer`, `boolean` and `string`;
+- `unit` is **required** for `float` and `integer` points and **refused** for
+  `boolean` ones. A bare `22` that might be Celsius or Fahrenheit would make
+  every later target and alert threshold ambiguous;
+- `min_value` and `max_value` are only accepted for `float` and `integer`
+  points, and the lower end may not exceed the upper one;
+- `site_id` is required and `facility_id` is not. A point may belong to the
+  site as a whole — an outdoor sensor serves every facility on it. When a
+  facility is given, it has to be one of that site's;
+- `code` follows the same slug rule as a site, and is unique **within its
+  site**, not within its facility. Two facilities on one site cannot both hold
+  an `air_temperature`; two different sites can;
+- a point cannot be created inside an archived site or facility;
+- `PATCH` accepts `name`, `unit`, `min_value`, `max_value` and `status` only.
+  `code`, `site_id`, `facility_id`, `point_kind`, `metric_type` and `data_type`
+  all define what the point *means*: changing one would reinterpret every value
+  already recorded against the point without touching any of them;
+- `unit`, `min_value` and `max_value` are nullable, so in a `PATCH` an explicit
+  `null` clears them while omitting the field leaves the stored value alone.
+  The result is still validated against the point's `data_type`, so clearing
+  the unit of a float point is refused;
+- there is no `DELETE`, and a site or facility that still has points cannot be
+  deleted at the database level either (`ON DELETE RESTRICT`).
+
+Every point owns exactly one state projection, created with it in the same
+transaction. Throughout Milestone 1 it is empty — nothing writes a point's
+value yet, and no endpoint offers to:
+
+```bash
+curl http://localhost:8000/api/v1/points/b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40/state
+```
+
+```json
+{
+  "point_id": "b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40",
+  "value": null,
+  "observed_at": null,
+  "received_at": null,
+  "quality": "no_data",
+  "revision": 0,
+  "updated_at": "2026-07-28T09:44:02.118376Z"
+}
+```
+
+`observed_at` and `received_at` stay apart on purpose: a buffered edge gateway
+makes the two differ by hours. `revision` exists so that Milestone 2 can add
+concurrent-update semantics without a migration, and stays at `0` until then.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unknown `point_kind` | 422 | `validation_error` |
+| Inverted range in a creation body | 422 | `validation_error` |
+| `site_id` references no site | 422 | `site_not_found` |
+| `facility_id` references no facility | 422 | `facility_not_found` |
+| `facility_id` belongs to another site | 422 | `facility_not_in_site` |
+| Unit missing on a `float` or `integer` point | 422 | `unit_required` |
+| Unit given for a `boolean` point | 422 | `unit_not_allowed` |
+| Range given for a non-numeric point | 422 | `range_not_allowed` |
+| `PATCH` would invert the stored range | 422 | `invalid_value_range` |
+| Point does not exist | 404 | `point_not_found` |
+| `code` already taken on that site | 409 | `point_code_conflict` |
+| Site or facility is archived | 409 | `parent_archived` |
+| `PATCH` names a field that defines the point | 409 | `immutable_field` |
+
 ## Configuration
 
 | Variable | Default | Required |
@@ -359,7 +476,8 @@ repository secrets.
 src/ai_greenhouse/
 ├── api/                 # HTTP routes and dependencies
 ├── core/                # Settings, logging, shared value types and exceptions
-├── topology/            # Site and Facility: models, schemas, repository, service
+├── topology/            # Site, Facility and ControlZone: the physical structure
+├── points/              # Point and PointCurrentState: the logical values
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```

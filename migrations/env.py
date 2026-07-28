@@ -12,6 +12,7 @@ from ai_greenhouse.infrastructure.database.metadata import metadata
 # Without this, autogenerate and `alembic check` compare the database against
 # an empty metadata and report no changes. Every new module's models.py must be
 # added here.
+from ai_greenhouse.points import models as points_models  # noqa: F401
 from ai_greenhouse.topology import models as topology_models  # noqa: F401
 
 config = context.config
