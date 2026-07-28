@@ -7,6 +7,7 @@ their endpoints on.
 
 from fastapi import APIRouter
 
+from ai_greenhouse.api.routes.facilities import router as facilities_router
 from ai_greenhouse.api.routes.health import router as health_router
 from ai_greenhouse.api.routes.sites import router as sites_router
 
@@ -22,3 +23,4 @@ Entity stories mount their routers here. ``GET /health`` stays on
 ``root_router`` and is not duplicated under the prefix.
 """
 api_v1_router.include_router(sites_router)
+api_v1_router.include_router(facilities_router)

@@ -134,6 +134,64 @@ stack traces:
 | `code` already taken | 409 | `site_code_conflict` |
 | `PATCH` names `code` | 409 | `immutable_field` |
 
+## Facilities API
+
+A facility is a growing or infrastructure object inside a site: a growbox, a
+greenhouse, a hydroponic rack, a seedling room or a water preparation node.
+
+```http
+POST   /api/v1/facilities
+GET    /api/v1/facilities?site_id=&facility_type=&status=&limit=&offset=
+GET    /api/v1/facilities/{facility_id}
+PATCH  /api/v1/facilities/{facility_id}
+```
+
+Create a facility:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/facilities \
+  -H 'content-type: application/json' \
+  -d '{"site_id": "571fce69-8221-4b5c-8284-728854f2a451",
+       "name": "Basil Growbox", "code": "basil-growbox",
+       "facility_type": "growbox"}'
+```
+
+```json
+{
+  "id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
+  "site_id": "571fce69-8221-4b5c-8284-728854f2a451",
+  "name": "Basil Growbox",
+  "code": "basil-growbox",
+  "facility_type": "growbox",
+  "status": "active",
+  "created_at": "2026-07-28T08:12:04.118420Z",
+  "updated_at": "2026-07-28T08:12:04.118423Z"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `facility_type` is one of `growbox`, `greenhouse`, `rack`, `seedling_room`
+  and `utility`;
+- `code` follows the same slug rule as a site, but is unique **within its
+  site** only. Two sites may each hold a `basil-growbox`;
+- a facility cannot be created inside an archived site;
+- `PATCH` accepts `name`, `facility_type` and `status` only. A facility never
+  moves between sites: that is a separate administrative operation, because the
+  zones and points below it have to move with it;
+- there is no `DELETE`, and a site that still has facilities cannot be deleted
+  at the database level either (`ON DELETE RESTRICT`).
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unknown `facility_type` | 422 | `validation_error` |
+| `site_id` references no site | 422 | `site_not_found` |
+| Facility does not exist | 404 | `facility_not_found` |
+| `code` already taken on that site | 409 | `facility_code_conflict` |
+| Site is archived | 409 | `parent_archived` |
+| `PATCH` names `code` | 409 | `immutable_field` |
+| `PATCH` names `site_id` | 409 | `facility_site_immutable` |
+
 ## Configuration
 
 | Variable | Default | Required |
@@ -202,7 +260,7 @@ docker compose up --build
 src/ai_greenhouse/
 ├── api/                 # HTTP routes and dependencies
 ├── core/                # Settings, logging, shared value types and exceptions
-├── topology/            # Site: models, schemas, repository, service
+├── topology/            # Site and Facility: models, schemas, repository, service
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```

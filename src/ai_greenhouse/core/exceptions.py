@@ -16,6 +16,7 @@ __all__ = [
     "DomainError",
     "ImmutableFieldError",
     "NotFoundError",
+    "ParentArchivedError",
     "ReferenceError",
 ]
 
@@ -87,3 +88,13 @@ class ImmutableFieldError(ConflictError):
     """A field that is fixed at creation time was modified."""
 
     code = "immutable_field"
+
+
+class ParentArchivedError(ConflictError):
+    """A child entity was created inside a parent that is no longer active.
+
+    Shared rather than declared per module: every entity below a site repeats
+    the same rule, and every module reports it with the same ``error.code``.
+    """
+
+    code = "parent_archived"
