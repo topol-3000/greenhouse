@@ -1,5 +1,7 @@
 # AI Greenhouse
 
+[![CI](https://github.com/topol-3000/greenhouse/actions/workflows/ci.yml/badge.svg)](https://github.com/topol-3000/greenhouse/actions/workflows/ci.yml)
+
 AI Greenhouse is a modular-monolith backend for incrementally building greenhouse
 automation scenarios. Milestone 0 provided the runnable technical foundation:
 FastAPI, PostgreSQL, migrations, configuration, structured logging, and a
@@ -195,6 +197,34 @@ To remove the local database volume and verify a completely clean initialization
 docker compose down -v
 docker compose up --build
 ```
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to
+`main` and on every pull request. A run in progress for the same ref is
+cancelled when a newer commit arrives. Both jobs are required to pass: a Ruff
+violation, a formatting difference, a failing test, or a Dockerfile that no
+longer builds all fail the workflow.
+
+| Job | What it runs |
+| --- | --- |
+| `lint` | `ruff check` and `ruff format --check` |
+| `test` | `docker compose build api`, then `docker compose run --rm api pytest` |
+
+The two jobs deliberately reach the code by different routes, and both are the
+commands used locally rather than CI-only equivalents:
+
+- `lint` installs from `uv.lock` with `uv sync --frozen` on the runner, so the
+  Ruff version matching the lockfile is the one that judges the code;
+- `test` goes through Compose, so CI builds the same image and talks to the
+  same PostgreSQL 18 service as `docker compose up --build`. The container
+  entrypoint waits for the database and applies `alembic upgrade head` before
+  pytest starts, which also proves the migrations apply to an empty database.
+  Compose supplies `DATABASE_URL`, so the integration tests execute against
+  real PostgreSQL instead of skipping.
+
+Compose defaults cover every variable the workflow needs, so CI requires no
+repository secrets.
 
 ## Project structure
 
