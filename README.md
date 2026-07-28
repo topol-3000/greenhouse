@@ -5,11 +5,13 @@
 AI Greenhouse is a modular-monolith backend for incrementally building greenhouse
 automation scenarios. Milestone 0 provided the runnable technical foundation:
 FastAPI, PostgreSQL, migrations, configuration, structured logging, and a
-database-aware health endpoint. Milestone 1 adds the topology, starting with the
-`Site` entity.
+database-aware health endpoint. Milestone 1 provides the complete digital
+growbox topology: sites, facilities, control zones, logical points, current-state
+projections, zone-point assignments, and a single-request facility
+configuration.
 
 The runtime is Python 3.14 with PostgreSQL 18. Authentication, telemetry,
-simulation and frontend are not included yet.
+simulation, devices, and frontend are not included yet.
 
 ## Prerequisites
 
@@ -66,6 +68,111 @@ If PostgreSQL cannot execute the health query, the endpoint returns HTTP 503 wit
 
 The response never includes connection strings, credentials, exception details,
 or stack traces. Technical failure context is written to secret-redacted JSON logs.
+
+## Seed the Milestone 1 demo
+
+With PostgreSQL running, create the complete basil growbox with one command:
+
+```bash
+docker compose run --rm api python -m ai_greenhouse.seed demo
+```
+
+The command creates or finds this exact configuration:
+
+```text
+Site:         Home           code: home,          timezone: UTC
+Facility:     Basil Growbox  code: basil-growbox, type: growbox
+ControlZone:  Main Climate   code: main-climate,  type: climate
+
+Points (all facility-scoped):
+  air_temperature   measurement  float    unit: °C   range: -20..60
+  air_humidity      measurement  float    unit: %    range: 0..100
+  fan_power         control      boolean  no unit
+  fan_running       status       boolean  no unit
+
+Assignments on Main Climate:
+  air_temperature -> primary_measurement
+  air_humidity    -> secondary_measurement
+  fan_power       -> control_output
+  fan_running     -> status_feedback
+```
+
+The seed is idempotent. Running the command again finds the records by `code`
+within their parent scope, creates no duplicates, and exits successfully. All
+writes use the same domain services as the HTTP API. The command emits
+structured JSON logs containing every created or found identifier; it does not
+run automatically when the API container starts.
+
+## Demo walkthrough
+
+The following Bash session starts the stack, seeds it, discovers the generated
+identifiers, and reads the complete Milestone 1 API scenario:
+
+```bash
+docker compose up --build -d
+docker compose run --rm api python -m ai_greenhouse.seed demo
+
+curl -fsS http://localhost:8000/health
+
+SITE_ID=$(
+  curl -fsS 'http://localhost:8000/api/v1/sites' |
+    python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "home"))'
+)
+curl -fsS "http://localhost:8000/api/v1/sites/${SITE_ID}"
+
+FACILITY_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/facilities?site_id=${SITE_ID}" |
+    python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "basil-growbox"))'
+)
+curl -fsS "http://localhost:8000/api/v1/facilities?site_id=${SITE_ID}"
+curl -fsS "http://localhost:8000/api/v1/control-zones?facility_id=${FACILITY_ID}"
+curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}"
+
+for POINT_ID in $(
+  curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}" |
+    python -c 'import json,sys; print(*(x["id"] for x in json.load(sys.stdin)["items"]))'
+); do
+  curl -fsS "http://localhost:8000/api/v1/points/${POINT_ID}/state"
+done
+
+curl -fsS "http://localhost:8000/api/v1/facilities/${FACILITY_ID}/configuration"
+```
+
+Each point-state response, and every short state in the final configuration,
+has `"quality": "no_data"` and `"value": null`. Milestone 1 defines the
+logical identities and their empty state projections; it does not produce
+values.
+
+## API conventions and errors
+
+`GET /health` intentionally stays at the unversioned root. Every domain
+endpoint lives under `/api/v1`.
+
+Collection endpoints use the same envelope and accept `limit` and `offset`:
+
+```json
+{"items": [], "total": 0, "limit": 50, "offset": 0}
+```
+
+Every domain failure uses one error envelope:
+
+```json
+{
+  "error": {
+    "code": "facility_not_found",
+    "message": "Facility not found",
+    "details": {"facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88"}
+  }
+}
+```
+
+The status codes have consistent meanings:
+
+| HTTP | Meaning |
+| --- | --- |
+| 404 | The resource named by the request path does not exist. |
+| 409 | Existing state conflicts with the operation, such as a duplicate code, archived parent, immutable field, or invalid assignment. |
+| 422 | The request shape or value is invalid, or a referenced parent from the request body cannot be used. |
 
 ## Sites API
 
@@ -516,6 +623,20 @@ concurrent-update semantics without a migration, and stays at `0` until then.
 | Site or facility is archived | 409 | `parent_archived` |
 | `PATCH` names a field that defines the point | 409 | `immutable_field` |
 
+## Milestone 1 limitations
+
+Milestone 1 deliberately stops at a readable digital growbox:
+
+- no `Area` physical-space hierarchy;
+- no assignment history — removing a zone-point assignment removes only that
+  current link;
+- no authentication or authorization;
+- no telemetry or other point-state writes;
+- no devices, channels, bindings, or physical addresses.
+
+These omissions are milestone boundaries, not partial implementations. The
+seed contains no future simulation, automation, telemetry, or device fixtures.
+
 ## Configuration
 
 | Variable | Default | Required |
@@ -626,6 +747,7 @@ src/ai_greenhouse/
 ├── core/                # Settings, logging, shared value types and exceptions
 ├── topology/            # Site, Facility, ControlZone and zone point assignments
 ├── points/              # Point and PointCurrentState: the logical values
+├── seed/                # Explicit, idempotent Milestone 1 demo seed
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```
