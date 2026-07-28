@@ -17,6 +17,8 @@ MIN_NAME_LENGTH: int = 1
 MAX_NAME_LENGTH: int = 200
 MIN_TIMEZONE_LENGTH: int = 1
 MAX_TIMEZONE_LENGTH: int = 64
+MIN_UNIT_LENGTH: int = 1
+MAX_UNIT_LENGTH: int = 32
 
 DEFAULT_TIMEZONE: str = "UTC"
 """Fallback timezone for entities that do not declare one."""
@@ -36,6 +38,22 @@ NameStr = Annotated[
     ),
 ]
 """Human-readable label, stripped of surrounding whitespace."""
+
+UnitStr = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=MIN_UNIT_LENGTH,
+        max_length=MAX_UNIT_LENGTH,
+    ),
+]
+"""Unit of measurement as written by the operator, for example ``°C`` or ``%``.
+
+Deliberately not validated against a controlled vocabulary. A unit registry is a
+domain decision of its own, and guessing one now would reject the perfectly
+reasonable units a grower actually uses. Whether a unit is required at all
+depends on the point's ``data_type`` and is decided in the points service.
+"""
 
 
 def validate_iana_timezone(value: str) -> str:
