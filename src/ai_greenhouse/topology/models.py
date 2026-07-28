@@ -1,9 +1,10 @@
 """ORM models of the topology module."""
 
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_greenhouse.core.types import (
@@ -18,6 +19,7 @@ from ai_greenhouse.infrastructure.database.base import (
     TimestampMixin,
     UUIDPrimaryKeyMixin,
     enum_column,
+    utc_now,
 )
 
 
@@ -161,3 +163,91 @@ class ControlZone(UUIDPrimaryKeyMixin, TimestampMixin, StatusMixin, Base):
     def __repr__(self) -> str:
         """Return a debug-friendly representation without the full row."""
         return f"ControlZone(id={self.id!r}, facility_id={self.facility_id!r}, code={self.code!r})"
+
+
+class ZonePointRole(StrEnum):
+    """Part a point plays inside the zone it is assigned to.
+
+    The role is a property of the *link*, not of the point: the same air
+    temperature point can be the primary measurement of a climate zone and a
+    safety interlock of a safety zone at the same time.
+    """
+
+    PRIMARY_MEASUREMENT = "primary_measurement"
+    SECONDARY_MEASUREMENT = "secondary_measurement"
+    CONTROL_OUTPUT = "control_output"
+    STATUS_FEEDBACK = "status_feedback"
+    SAFETY_INTERLOCK = "safety_interlock"
+    DERIVED_INDICATOR = "derived_indicator"
+
+
+class ZonePointAssignment(UUIDPrimaryKeyMixin, Base):
+    """The link that says a point takes part in a zone, and in what part.
+
+    This is what turns three independent tables into one growbox description,
+    and it is what Milestone 3 reads to know which point of a control loop is
+    the process variable and which one is the actuator output.
+
+    It is the one entity in Milestone 1 that is really deleted rather than
+    archived. An assignment is a statement about the current composition of a
+    zone, not a record with a history: removing a point from a zone does not
+    retire the point, and an ``archived`` link would mean nothing that its
+    absence does not already say.
+
+    There is no ``updated_at`` and no ``status``. Nothing about an existing link
+    can change — a different role is a different link — so a modification
+    instant would never be written, and there is no ``effective_from`` or
+    ``effective_to`` either: the history of a zone's composition is deliberately
+    out of scope until a milestone needs to read it.
+
+    Attributes:
+        control_zone_id: The zone the point takes part in.
+        point_id: The point being assigned. Held by identifier and not by an
+            ORM relationship, because the point belongs to another aggregate.
+        role: Part the point plays in the zone, from :class:`ZonePointRole`.
+            Which roles suit which kind of point is a business rule and lives
+            in the service, not in this table.
+        created_at: Instant the link was made.
+    """
+
+    __tablename__ = "zone_point_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "control_zone_id",
+            "point_id",
+            "role",
+            name="uq_zone_point_assignments_control_zone_id_point_id_role",
+        ),
+    )
+
+    control_zone_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("control_zones.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    point_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[ZonePointRole] = enum_column(
+        ZonePointRole,
+        constraint_name="role",
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    def __repr__(self) -> str:
+        """Return a debug-friendly representation without the full row."""
+        return (
+            f"ZonePointAssignment(id={self.id!r}, "
+            f"control_zone_id={self.control_zone_id!r}, "
+            f"point_id={self.point_id!r}, role={self.role!r})"
+        )

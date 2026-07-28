@@ -16,6 +16,7 @@ from ai_greenhouse.core.exceptions import (
     DomainError,
     NotFoundError,
     ParentArchivedError,
+    ReferenceError,
 )
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "PointNotFoundError",
     "PointSiteArchivedError",
     "PointStateNotFoundError",
+    "ReferencedPointNotFoundError",
     "UnitNotAllowedError",
     "UnitRequiredError",
     "ValueRangeNotAllowedError",
@@ -39,6 +41,30 @@ class PointNotFoundError(NotFoundError):
 
     def __init__(self, point_id: UUID) -> None:
         """Report the missing point.
+
+        Args:
+            point_id: The identifier that could not be resolved.
+        """
+        super().__init__("Point not found", details={"point_id": str(point_id)})
+
+
+class ReferencedPointNotFoundError(ReferenceError):
+    """A request body references a point that does not exist.
+
+    Distinct from :class:`PointNotFoundError`: the identifier came from the body
+    rather than from the path, so the request is unprocessable (HTTP 422) rather
+    than addressed at a missing resource (HTTP 404). Both report the same
+    ``point_not_found`` code, because the missing entity is the same one.
+
+    Declared here rather than in the module that raises it, following the rule
+    the topology module already sets for a referenced site or facility: the
+    failure belongs to the module that owns the missing entity.
+    """
+
+    code = "point_not_found"
+
+    def __init__(self, point_id: UUID) -> None:
+        """Report the missing referenced point.
 
         Args:
             point_id: The identifier that could not be resolved.

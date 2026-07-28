@@ -7,6 +7,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_greenhouse_dev}
     volumes:
       - postgres_data:/var/lib/postgresql
+    ports:
+      # Published so a local psql or GUI client can reach the development
+      # database. Override POSTGRES_PORT when 5432 is already taken on the host.
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test:
         [

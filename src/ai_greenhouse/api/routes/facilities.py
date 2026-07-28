@@ -6,9 +6,6 @@ It contains no SQLAlchemy statement and no business rule; both live in
 
 There is no ``DELETE``: a facility is retired with
 ``PATCH {"status": "archived"}``.
-
-``GET /api/v1/facilities/{facility_id}/configuration`` belongs to Milestone 1.6
-and is deliberately absent here.
 """
 
 from typing import Annotated
@@ -21,8 +18,13 @@ from ai_greenhouse.api.dependencies import get_session
 from ai_greenhouse.api.pagination import Page, PageParams
 from ai_greenhouse.infrastructure.database.base import StatusEnum
 from ai_greenhouse.topology.models import Facility, FacilityType
-from ai_greenhouse.topology.schemas import FacilityCreate, FacilityRead, FacilityUpdate
-from ai_greenhouse.topology.service import FacilityService
+from ai_greenhouse.topology.schemas import (
+    FacilityConfigurationRead,
+    FacilityCreate,
+    FacilityRead,
+    FacilityUpdate,
+)
+from ai_greenhouse.topology.service import FacilityConfigurationService, FacilityService
 
 router: APIRouter = APIRouter(prefix="/facilities", tags=["facilities"])
 
@@ -42,6 +44,26 @@ async def get_facility_service(
 
 
 FacilityServiceDep = Annotated[FacilityService, Depends(get_facility_service)]
+
+
+async def get_configuration_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> FacilityConfigurationService:
+    """Build the configuration read service on the request-scoped session.
+
+    Args:
+        session: The session opened for this request.
+
+    Returns:
+        A ``FacilityConfigurationService`` sharing the request's transaction.
+    """
+    return FacilityConfigurationService(session)
+
+
+ConfigurationServiceDep = Annotated[
+    FacilityConfigurationService,
+    Depends(get_configuration_service),
+]
 
 
 @router.post("", response_model=FacilityRead, status_code=status.HTTP_201_CREATED)
@@ -138,3 +160,29 @@ async def update_facility(
     """
     facility: Facility = await service.update_facility(facility_id, payload)
     return FacilityRead.model_validate(facility)
+
+
+@router.get("/{facility_id}/configuration", response_model=FacilityConfigurationRead)
+async def get_facility_configuration(
+    facility_id: UUID,
+    service: ConfigurationServiceDep,
+    include_archived: Annotated[
+        bool,
+        Query(description="Include archived zones and points in the document."),
+    ] = False,
+) -> FacilityConfigurationRead:
+    """Read a facility's whole configuration in one request.
+
+    The facility, its site, its zones with their composition and its points with
+    their last known state, assembled from a fixed number of queries.
+
+    Args:
+        facility_id: Identifier of the facility to describe.
+        service: The configuration read service for this request.
+        include_archived: Whether archived zones and points are kept in the
+            document; they are left out by default.
+
+    Returns:
+        The configuration document.
+    """
+    return await service.get_configuration(facility_id, include_archived=include_archived)
