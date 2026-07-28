@@ -20,8 +20,10 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
+      # setup-uv publishes no moving major tag past v7, so this pins the exact
+      # release rather than a tag that does not resolve.
       - name: Install uv and the pinned Python
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.14"
           enable-cache: true
