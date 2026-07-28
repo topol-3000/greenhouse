@@ -146,6 +146,7 @@ POST   /api/v1/facilities
 GET    /api/v1/facilities?site_id=&facility_type=&status=&limit=&offset=
 GET    /api/v1/facilities/{facility_id}
 PATCH  /api/v1/facilities/{facility_id}
+GET    /api/v1/facilities/{facility_id}/configuration?include_archived=
 ```
 
 Create a facility:
@@ -194,6 +195,76 @@ Rules worth knowing before calling it:
 | `PATCH` names `code` | 409 | `immutable_field` |
 | `PATCH` names `site_id` | 409 | `facility_site_immutable` |
 
+### Facility configuration
+
+The whole growbox in one request: what it is, where it stands, how it is divided
+into zones and which points those zones read and drive.
+
+```bash
+curl http://localhost:8000/api/v1/facilities/9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88/configuration
+```
+
+```json
+{
+  "facility": {
+    "id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
+    "name": "Basil Growbox",
+    "code": "basil-growbox",
+    "facility_type": "growbox",
+    "status": "active"
+  },
+  "site": {
+    "id": "571fce69-8221-4b5c-8284-728854f2a451",
+    "name": "Home",
+    "code": "home",
+    "timezone": "UTC"
+  },
+  "control_zones": [
+    {
+      "id": "4c8f2a01-77b3-4e0d-8a51-3b6e0d9f1c22",
+      "name": "Main Climate",
+      "code": "main-climate",
+      "zone_type": "climate",
+      "status": "active",
+      "points": [
+        {
+          "point_id": "0f9c3d55-2b71-4a19-9d0e-6a2f3c8b7e10",
+          "code": "air_temperature",
+          "role": "primary_measurement"
+        }
+      ]
+    }
+  ],
+  "points": [
+    {
+      "id": "0f9c3d55-2b71-4a19-9d0e-6a2f3c8b7e10",
+      "code": "air_temperature",
+      "name": "Air temperature",
+      "point_kind": "measurement",
+      "metric_type": "air_temperature",
+      "data_type": "float",
+      "unit": "°C",
+      "status": "active",
+      "state": {"value": null, "quality": "no_data", "observed_at": null}
+    }
+  ]
+}
+```
+
+- a point's own fields appear once, in `points`. A zone lists only the links, so
+  a point taking part in three zones is still described once and cannot be
+  described three inconsistent ways;
+- archived zones and points are left out. `?include_archived=true` keeps them,
+  and `status` on each entry says which is which;
+- the document is assembled from a fixed number of queries whatever the size of
+  the facility, and a regression test measures that;
+- `GET /api/v1/points/{point_id}/state` remains the detailed view of one value;
+  the configuration carries the short form of it.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Facility does not exist | 404 | `facility_not_found` |
+
 ## Control zones API
 
 A control zone is the part of a facility that is measured or controlled as one
@@ -206,6 +277,9 @@ POST   /api/v1/control-zones
 GET    /api/v1/control-zones?facility_id=&zone_type=&status=&limit=&offset=
 GET    /api/v1/control-zones/{zone_id}
 PATCH  /api/v1/control-zones/{zone_id}
+POST   /api/v1/control-zones/{zone_id}/points
+GET    /api/v1/control-zones/{zone_id}/points?limit=&offset=
+DELETE /api/v1/control-zones/{zone_id}/points/{assignment_id}
 ```
 
 Create a control zone:
@@ -250,9 +324,6 @@ Rules worth knowing before calling it:
 - there is no `DELETE`, and a facility that still has zones cannot be deleted at
   the database level either (`ON DELETE RESTRICT`).
 
-Assigning points to a zone (`/api/v1/control-zones/{zone_id}/points`) arrives
-with Milestone 1.6.
-
 | Situation | HTTP | `error.code` |
 | --- | --- | --- |
 | Invalid request body or unknown `zone_type` | 422 | `validation_error` |
@@ -262,6 +333,71 @@ with Milestone 1.6.
 | Facility is archived | 409 | `parent_archived` |
 | `PATCH` names `code` | 409 | `immutable_field` |
 | `PATCH` names `facility_id` | 409 | `zone_facility_immutable` |
+
+### Zone point assignments
+
+An assignment says that a point takes part in a zone and what part it plays
+there. It is what turns three independent lists into one growbox description,
+and what lets Milestone 3 tell a control loop's process variable from its
+actuator output.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/control-zones/4c8f2a01-77b3-4e0d-8a51-3b6e0d9f1c22/points \
+  -H 'content-type: application/json' \
+  -d '{"point_id": "0f9c3d55-2b71-4a19-9d0e-6a2f3c8b7e10",
+       "role": "primary_measurement"}'
+```
+
+```json
+{
+  "id": "b71c4e90-5d2a-4f18-9c33-0a7e5b1d6f24",
+  "control_zone_id": "4c8f2a01-77b3-4e0d-8a51-3b6e0d9f1c22",
+  "point_id": "0f9c3d55-2b71-4a19-9d0e-6a2f3c8b7e10",
+  "role": "primary_measurement",
+  "created_at": "2026-07-28T09:52:41.118376Z",
+  "point_code": "air_temperature",
+  "point_name": "Air temperature",
+  "point_kind": "measurement",
+  "data_type": "float",
+  "unit": "°C"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `role` is one of `primary_measurement`, `secondary_measurement`,
+  `control_output`, `status_feedback`, `safety_interlock` and
+  `derived_indicator`;
+- a role only suits some kinds of point: `control_output` needs a `control`
+  point, `status_feedback` needs a `status` one, and both measurement roles need
+  a `measurement` or `derived` one. `safety_interlock` and `derived_indicator`
+  accept any kind — narrowing them is a domain decision this milestone has not
+  made;
+- a zone and a point of **different sites** cannot be linked, and a point that
+  belongs to another facility of the same site cannot be either. A point with no
+  facility belongs to the site as a whole — an outdoor temperature — and any
+  zone on that site may read it;
+- a zone has at most one `primary_measurement`: it is controlled against one
+  process variable;
+- the same point may hold two *different* roles in one zone; only the exact
+  repetition of `(zone, point, role)` is refused;
+- neither an archived zone nor an archived point can take part in a new link;
+- `DELETE` is a real delete, and the only one in the API. An assignment is a
+  link, not a record with a history, so there is nothing to archive — and the
+  point itself is untouched by it.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unknown `role` | 422 | `validation_error` |
+| `point_id` references no point | 422 | `point_not_found` |
+| Control zone does not exist | 404 | `control_zone_not_found` |
+| Assignment does not exist in that zone | 404 | `assignment_not_found` |
+| Zone or point is archived | 409 | `parent_archived` |
+| Point belongs to another site | 409 | `cross_site_assignment` |
+| Point belongs to another facility | 409 | `cross_facility_assignment` |
+| Role does not suit the point's kind | 409 | `role_kind_mismatch` |
+| Zone already has a primary measurement | 409 | `primary_measurement_exists` |
+| That exact link already exists | 409 | `assignment_exists` |
 
 ## Points API
 
@@ -393,9 +529,21 @@ concurrent-update semantics without a migration, and stays at `0` until then.
 | `POSTGRES_DB` | `ai_greenhouse` | No |
 | `POSTGRES_USER` | `ai_greenhouse` | No |
 | `POSTGRES_PASSWORD` | `ai_greenhouse_dev` | No |
+| `POSTGRES_PORT` | `5432` | No |
 
 If PostgreSQL credentials are overridden, set `DATABASE_URL` to the matching
 SQLAlchemy async URL as well. Environment-specific `.env` files are ignored by Git.
+
+Compose publishes PostgreSQL on `POSTGRES_PORT`, so a local `psql` or a GUI
+client can reach the development database directly:
+
+```bash
+psql postgresql://ai_greenhouse:ai_greenhouse_dev@localhost:5432/ai_greenhouse
+```
+
+Set `POSTGRES_PORT` to something else when 5432 is already taken on the host.
+The `api` service still reaches the database over the Compose network on 5432,
+so `DATABASE_URL` does not change with it.
 
 ## Development commands
 
@@ -476,7 +624,7 @@ repository secrets.
 src/ai_greenhouse/
 ├── api/                 # HTTP routes and dependencies
 ├── core/                # Settings, logging, shared value types and exceptions
-├── topology/            # Site, Facility and ControlZone: the physical structure
+├── topology/            # Site, Facility, ControlZone and zone point assignments
 ├── points/              # Point and PointCurrentState: the logical values
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
