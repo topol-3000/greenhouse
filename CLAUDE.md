@@ -111,6 +111,9 @@ docker compose run --rm api alembic revision --autogenerate -m "description"
 uv run ruff check . && uv run ruff format --check .         # lint locally
 ```
 
+GitHub Actions (`.github/workflows/ci.yml`) runs the same lint and test
+commands on every push to `main` and every pull request.
+
 Tests use `pytest-asyncio` in `auto` mode. Integration tests run against the
 real PostgreSQL service and skip when no `DATABASE_URL` is set — SQLite is not
 a supported substitute. Unit tests live in `tests/unit/`, integration tests in
