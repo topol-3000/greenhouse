@@ -21,6 +21,7 @@ not roll the current value back — are decisions rather than constraints, and a
 decision made in one place is a decision that can be trusted.
 """
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -28,12 +29,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.infrastructure.database.base import StatusEnum
 from ai_greenhouse.points.exceptions import (
+    PointNotFoundError,
     PointStateNotFoundError,
     ReferencedPointNotFoundError,
 )
 from ai_greenhouse.points.models import Point, PointCurrentState, PointDataType
 from ai_greenhouse.points.repository import PointCurrentStateRepository, PointRepository
-from ai_greenhouse.telemetry.exceptions import ArchivedPointError, TelemetryValueTypeError
+from ai_greenhouse.telemetry.exceptions import (
+    ArchivedPointError,
+    InvalidTelemetryWindowError,
+    TelemetryValueTypeError,
+)
 from ai_greenhouse.telemetry.models import TelemetrySample
 from ai_greenhouse.telemetry.repository import TelemetrySampleRepository
 from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord
@@ -55,6 +61,42 @@ class TelemetryService:
         self._samples: TelemetrySampleRepository = TelemetrySampleRepository(session)
         self._points: PointRepository = PointRepository(session)
         self._states: PointCurrentStateRepository = PointCurrentStateRepository(session)
+
+    async def list_history(
+        self,
+        point_id: UUID,
+        *,
+        observed_from: datetime | None,
+        observed_to: datetime | None,
+        limit: int,
+    ) -> list[TelemetrySample]:
+        """Read one point's samples inside an optional inclusive time window.
+
+        Args:
+            point_id: Point whose history was requested.
+            observed_from: Inclusive lower bound on measurement time.
+            observed_to: Inclusive upper bound on measurement time.
+            limit: Maximum number of samples to return.
+
+        Returns:
+            Samples in deterministic newest-first order.
+
+        Raises:
+            PointNotFoundError: If the path names no point.
+            InvalidTelemetryWindowError: If the lower bound is after the upper
+                bound.
+        """
+        point: Point | None = await self._points.get_by_id(point_id)
+        if point is None:
+            raise PointNotFoundError(point_id)
+        if observed_from is not None and observed_to is not None and observed_from > observed_to:
+            raise InvalidTelemetryWindowError
+        return await self._samples.list_history(
+            point_id,
+            observed_from=observed_from,
+            observed_to=observed_to,
+            limit=limit,
+        )
 
     async def record_sample(self, record: TelemetrySampleRecord) -> None:
         """Record one measurement and advance the point's state if it is newer.

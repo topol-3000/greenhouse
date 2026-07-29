@@ -5,8 +5,11 @@ recorded, and what a re-delivered one means, belong to
 :mod:`ai_greenhouse.telemetry.service`.
 """
 
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
+from sqlalchemy import Select, select
 from sqlalchemy.dialects.postgresql import Insert, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +32,43 @@ class TelemetrySampleRepository:
                 by the caller driving one simulation step.
         """
         self._session: AsyncSession = session
+
+    async def list_history(
+        self,
+        point_id: UUID,
+        *,
+        observed_from: datetime | None,
+        observed_to: datetime | None,
+        limit: int,
+    ) -> list[TelemetrySample]:
+        """Read a bounded, newest-first history for one point.
+
+        The complete order and limit are part of the SQL statement. In
+        particular, ``id DESC`` breaks ties between samples observed at the
+        same instant, so repeated calls return the same order without Python
+        sorting or slicing.
+
+        Args:
+            point_id: Point whose samples to read.
+            observed_from: Inclusive lower bound on ``observed_at``.
+            observed_to: Inclusive upper bound on ``observed_at``.
+            limit: Maximum number of rows for PostgreSQL to return.
+
+        Returns:
+            Matching samples in ``observed_at DESC, id DESC`` order.
+        """
+        statement: Select[tuple[TelemetrySample]] = select(TelemetrySample).where(
+            TelemetrySample.point_id == point_id
+        )
+        if observed_from is not None:
+            statement = statement.where(TelemetrySample.observed_at >= observed_from)
+        if observed_to is not None:
+            statement = statement.where(TelemetrySample.observed_at <= observed_to)
+        statement = statement.order_by(
+            TelemetrySample.observed_at.desc(),
+            TelemetrySample.id.desc(),
+        ).limit(limit)
+        return list(await self._session.scalars(statement))
 
     async def insert_if_absent(self, sample: TelemetrySample) -> bool:
         """Insert one sample unless its identifier is already taken.

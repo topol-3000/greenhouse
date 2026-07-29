@@ -59,3 +59,25 @@ class TelemetrySampleRecord(BaseModel):
     quality: DataQuality
     simulation_run_id: UUID | None = None
     unit: UnitStr | None = None
+
+
+class TelemetrySampleRead(BaseModel):
+    """One stored measurement returned unchanged by the history API."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    point_id: UUID
+    value: Any
+    unit: UnitStr | None
+    observed_at: AwareDatetime
+    received_at: AwareDatetime
+    quality: DataQuality
+
+
+class TelemetryHistoryRead(BaseModel):
+    """A count-free collection of telemetry samples."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[TelemetrySampleRead]

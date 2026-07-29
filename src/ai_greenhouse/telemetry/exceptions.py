@@ -16,6 +16,7 @@ from ai_greenhouse.core.exceptions import DomainError, ParentArchivedError
 
 __all__ = [
     "ArchivedPointError",
+    "InvalidTelemetryWindowError",
     "TelemetryValueTypeError",
 ]
 
@@ -38,6 +39,17 @@ class ArchivedPointError(ParentArchivedError):
             "Point is archived and cannot receive telemetry",
             details={"point_id": str(point_id)},
         )
+
+
+class InvalidTelemetryWindowError(DomainError):
+    """The requested history window ends before it begins."""
+
+    code = "invalid_telemetry_window"
+    http_status = 422
+
+    def __init__(self) -> None:
+        """Report an inverted inclusive time window."""
+        super().__init__("from must not be later than to")
 
 
 class TelemetryValueTypeError(DomainError):
