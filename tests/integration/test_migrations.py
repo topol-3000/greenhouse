@@ -39,8 +39,9 @@ EXPECTED_TABLES: set[str] = {
     "points",
     "point_current_states",
     "zone_point_assignments",
+    "telemetry_samples",
 }
-"""The six Milestone 1 tables, all of which ``downgrade`` must remove again."""
+"""Every table the migrations create, all of which ``downgrade`` must remove."""
 
 
 def run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProcess[str]:
