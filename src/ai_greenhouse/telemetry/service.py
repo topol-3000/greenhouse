@@ -42,7 +42,7 @@ from ai_greenhouse.telemetry.exceptions import (
 )
 from ai_greenhouse.telemetry.models import TelemetrySample
 from ai_greenhouse.telemetry.repository import TelemetrySampleRepository
-from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord
+from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord, TelemetryWriteOutcome
 
 
 class TelemetryService:
@@ -98,7 +98,7 @@ class TelemetryService:
             limit=limit,
         )
 
-    async def record_sample(self, record: TelemetrySampleRecord) -> None:
+    async def record_sample(self, record: TelemetrySampleRecord) -> TelemetryWriteOutcome:
         """Record one measurement and advance the point's state if it is newer.
 
         The steps run in this order for a reason. The point is resolved and the
@@ -115,9 +115,17 @@ class TelemetryService:
         most recent one. ``revision`` therefore counts actual replacements, and
         never decreases.
 
+        The three ways this can end are reported rather than collapsed into
+        "accepted", because the caller downstream of the boundary — automation —
+        has to act on the first one only. See
+        :class:`~ai_greenhouse.telemetry.schemas.TelemetryWriteOutcome`.
+
         Args:
             record: The measurement offered by the producer. Its ``unit`` is
                 ignored in favour of the point's.
+
+        Returns:
+            Which of the three things the boundary did with the sample.
 
         Raises:
             ReferencedPointNotFoundError: If no point has that identifier.
@@ -146,13 +154,13 @@ class TelemetryService:
             quality=record.quality,
         )
         if not await self._samples.insert_if_absent(sample):
-            return
+            return TelemetryWriteOutcome.DUPLICATE
 
         state: PointCurrentState | None = await self._states.get_for_update(point.id)
         if state is None:
             raise PointStateNotFoundError(point.id)
         if state.observed_at is not None and record.observed_at <= state.observed_at:
-            return
+            return TelemetryWriteOutcome.OUT_OF_ORDER
 
         state.value = record.value
         state.observed_at = record.observed_at
@@ -160,6 +168,7 @@ class TelemetryService:
         state.quality = record.quality
         state.revision += 1
         await self._states.flush()
+        return TelemetryWriteOutcome.RECORDED_CURRENT
 
     @staticmethod
     def _check_value_type(*, point_id: UUID, data_type: PointDataType, value: Any) -> None:

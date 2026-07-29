@@ -24,8 +24,10 @@ the target and are opened only when the current task needs them.
   write boundary, current-state projection updates, and read-only history.
 - `simulation` owns `SimulationRun` persistence, the pure `simple-climate-v1`
   model, and the single-process in-application runtime that drives runs.
-- `control` owns the immutable `hysteresis-v1` `ControlLoop`: one per climate
-  zone, binding a temperature, a fan-power and a fan-running point.
+- `control` owns the immutable `hysteresis-v1` `ControlLoop`, the pure policy,
+  the idempotent applied `Command`, the loopback actuator boundary, and the
+  source-independent ingestion path every in-process producer offers telemetry
+  on.
 - `seed` creates the idempotent basil-growbox demo through domain services.
 - Domain modules use `models.py`, `schemas.py`, `repository.py`, `service.py`,
   and `exceptions.py` when those layers are needed.
@@ -40,11 +42,12 @@ the target and are opened only when the current task needs them.
 
 Implemented: the growbox topology with stable logical point IDs, append-only
 telemetry, the current-state projection, telemetry history, simulation runs, the
-deterministic climate model, the in-application runtime, and immutable
-hysteresis control-loop configuration.
+deterministic climate model, the in-application runtime, hysteresis control-loop
+configuration, and the automation flow that turns an accepted temperature into
+an applied fan command.
 
-Out of scope: commands, devices, Edge/MQTT, authentication, UI, distributed
-workers, and a generic public ingestion endpoint.
+Out of scope: devices, Edge/MQTT, authentication, UI, distributed workers, a
+generic public ingestion endpoint, and any endpoint that creates a command.
 
 ## Invariants and development rules
 
@@ -56,6 +59,13 @@ workers, and a generic public ingestion endpoint.
   state. `observed_at` and `received_at` have different meanings.
 - Telemetry values match `Point.data_type`; `bool` is not an integer. The unit
   is copied from the point as a snapshot.
+- In-process producers offer telemetry through `TelemetryIngestionService`, not
+  to `TelemetryService` directly, so automation runs whatever the source.
+- Automation acts only on a sample that became the current state. A command is
+  persisted only once applied, and it and both result samples are atomic; a
+  failed application never rolls back the measurement that triggered it.
+- `fan_power` and `fan_running` are written only through the telemetry
+  boundary. `fan_running` is an output and never a policy input.
 - Reuse constraints from `core/types.py`. Enum columns use `VARCHAR` plus a
   `CHECK` through `enum_column`, never native PostgreSQL enums.
 - Domain resources are archived rather than physically deleted.

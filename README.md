@@ -799,7 +799,11 @@ the system:
 - no authentication or authorization;
 - no devices, channels, bindings, or physical addresses;
 - no public telemetry ingestion endpoint, and no device or edge infrastructure;
-- no commands and no UI;
+- no UI, and no endpoint that creates a command: a command is a consequence of
+  accepted telemetry, never something a client asks for;
+- no manual fan control, no delivery attempts, retries or expiry, and no
+  separate execution record: only commands that were applied in full are
+  stored;
 - no policy versions, schedules, PID or rules engine: a control loop carries
   its own `hysteresis-v1` thresholds and nothing else;
 - no distributed workers: the simulation runtime is single-process and lives
@@ -920,7 +924,7 @@ src/ai_greenhouse/
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
 ├── simulation/          # Deterministic climate runs and in-process runtime
-├── control/             # Immutable hysteresis control loops
+├── control/             # Hysteresis loops, commands and the actuator boundary
 ├── seed/                # Explicit, idempotent demo growbox seed
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
