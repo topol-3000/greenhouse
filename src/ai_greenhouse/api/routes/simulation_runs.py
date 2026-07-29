@@ -1,14 +1,15 @@
 """Create and read persisted simulation runs."""
 
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.api.dependencies import get_session
 from ai_greenhouse.api.pagination import Page, PageParams
 from ai_greenhouse.simulation.models import SimulationRun, SimulationStatus
+from ai_greenhouse.simulation.runtime import SimulationRuntime
 from ai_greenhouse.simulation.schemas import SimulationRunCreate, SimulationRunRead
 from ai_greenhouse.simulation.service import SimulationRunService
 
@@ -25,6 +26,17 @@ async def get_simulation_run_service(
 SimulationRunServiceDep = Annotated[
     SimulationRunService,
     Depends(get_simulation_run_service),
+]
+
+
+async def get_simulation_runtime(request: Request) -> SimulationRuntime:
+    """Return the application-scoped task registry."""
+    return cast(SimulationRuntime, request.app.state.simulation_runtime)
+
+
+SimulationRuntimeDep = Annotated[
+    SimulationRuntime,
+    Depends(get_simulation_runtime),
 ]
 
 
@@ -69,4 +81,28 @@ async def get_simulation_run(
 ) -> SimulationRunRead:
     """Read one simulation run."""
     run: SimulationRun = await service.get_run(run_id)
+    return SimulationRunRead.model_validate(run)
+
+
+@router.post(
+    "/{run_id}/start",
+    response_model=SimulationRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_simulation_run(
+    run_id: UUID,
+    runtime: SimulationRuntimeDep,
+) -> SimulationRunRead:
+    """Start a run after committing its immediate initial step."""
+    run = await runtime.start(run_id)
+    return SimulationRunRead.model_validate(run)
+
+
+@router.post("/{run_id}/stop", response_model=SimulationRunRead)
+async def stop_simulation_run(
+    run_id: UUID,
+    runtime: SimulationRuntimeDep,
+) -> SimulationRunRead:
+    """Stop a run after its background task has ended."""
+    run = await runtime.stop(run_id)
     return SimulationRunRead.model_validate(run)

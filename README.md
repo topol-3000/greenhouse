@@ -10,8 +10,10 @@ growbox topology: sites, facilities, control zones, logical points, current-stat
 projections, zone-point assignments, and a single-request facility
 configuration.
 
-The runtime is Python 3.14 with PostgreSQL 18. Authentication, telemetry,
-simulation, devices, and frontend are not included yet.
+Milestone 2 adds append-only telemetry, current-state updates, telemetry
+history, deterministic climate simulation, persisted runs, and a
+single-process runtime. The runtime is Python 3.14 with PostgreSQL 18.
+Authentication, devices, control automation, and frontend are not included yet.
 
 ## Prerequisites
 
@@ -103,7 +105,7 @@ writes use the same domain services as the HTTP API. The command emits
 structured JSON logs containing every created or found identifier; it does not
 run automatically when the API container starts.
 
-## Demo walkthrough
+## Milestone 1 demo walkthrough
 
 The following Bash session starts the stack, seeds it, discovers the generated
 identifiers, and reads the complete Milestone 1 API scenario:
@@ -142,6 +144,80 @@ Each point-state response, and every short state in the final configuration,
 has `"quality": "no_data"` and `"value": null`. Milestone 1 defines the
 logical identities and their empty state projections; it does not produce
 values.
+
+## Milestone 2 demo walkthrough
+
+Start from the same M1 seed; it supplies the topology and stable logical point
+IDs, but creates no simulation run or telemetry. This copy-pasteable Bash
+session discovers those IDs, creates and starts a run, reads changing
+temperature and humidity, and stops the run:
+
+```bash
+docker compose up --build -d
+docker compose run --rm api python -m ai_greenhouse.seed demo
+
+FACILITY_ID=$(
+  curl -fsS 'http://localhost:8000/api/v1/facilities' |
+    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "basil-growbox"))'
+)
+ZONE_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/control-zones?facility_id=${FACILITY_ID}" |
+    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "main-climate"))'
+)
+TEMPERATURE_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}" |
+    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "air_temperature"))'
+)
+HUMIDITY_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}" |
+    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "air_humidity"))'
+)
+
+RUN=$(
+  curl -fsS -X POST 'http://localhost:8000/api/v1/simulation-runs' \
+    -H 'content-type: application/json' \
+    -d "{\"control_zone_id\":\"${ZONE_ID}\",\"speed_multiplier\":3600,\"initial_temperature\":22.0,\"initial_humidity\":65.0,\"ambient_temperature\":30.0,\"ambient_humidity\":50.0}"
+)
+printf '%s\n' "${RUN}"
+RUN_ID=$(
+  printf '%s' "${RUN}" |
+    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+)
+
+curl -fsS -X POST "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}/start"
+sleep 4
+
+curl -fsS "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}"
+curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/state"
+curl -fsS "http://localhost:8000/api/v1/points/${HUMIDITY_ID}/state"
+curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry"
+curl -fsS "http://localhost:8000/api/v1/points/${HUMIDITY_ID}/telemetry"
+
+curl -fsS -X POST "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}/stop"
+SAMPLES_AT_STOP=$(
+  curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry" |
+    docker compose exec -T api python -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))'
+)
+sleep 2
+SAMPLES_AFTER_STOP=$(
+  curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry" |
+    docker compose exec -T api python -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))'
+)
+test "${SAMPLES_AT_STOP}" = "${SAMPLES_AFTER_STOP}"
+curl -fsS "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}"
+```
+
+Creation returns HTTP 201 with `"status": "created"`. Start returns HTTP 202
+with `"status": "running"`, an immediate initial sample for each simulated
+point, and `"step_index": 1`. At `speed_multiplier: 3600`, every later
+real-second tick advances virtual time by one hour, so both state values move
+toward the ambient values and each telemetry history accumulates samples.
+
+The history is newest first. Its `observed_at` is the model's virtual instant,
+while `received_at` is the real intake instant; after four ticks they differ by
+almost four hours. Both point states have `"quality": "simulated"`. Stop returns
+HTTP 200 with `"status": "stopped"`, and the final equality check proves that no
+new temperature sample appeared after the stop response.
 
 ## API conventions and errors
 
@@ -639,19 +715,20 @@ concurrent-update semantics without a migration, and stays at `0` until then.
 | Site or facility is archived | 409 | `parent_archived` |
 | `PATCH` names a field that defines the point | 409 | `immutable_field` |
 
-## Milestone 1 limitations
+## Milestone boundaries
 
-Milestone 1 deliberately stops at a readable digital growbox:
+The M1 seed deliberately remains a topology-only growbox:
 
 - no `Area` physical-space hierarchy;
 - no assignment history — removing a zone-point assignment removes only that
   current link;
 - no authentication or authorization;
-- no telemetry or other point-state writes;
 - no devices, channels, bindings, or physical addresses.
 
-These omissions are milestone boundaries, not partial implementations. The
-seed contains no future simulation, automation, telemetry, or device fixtures.
+M2 fills point state through append-only telemetry and the in-process simulator,
+but adds no public ingestion endpoint, device or edge infrastructure, commands,
+control loops, UI, or distributed worker. The seed still contains no simulation,
+automation, telemetry, or device fixtures.
 
 ## Configuration
 
@@ -763,6 +840,8 @@ src/ai_greenhouse/
 ├── core/                # Settings, logging, shared value types and exceptions
 ├── topology/            # Site, Facility, ControlZone and zone point assignments
 ├── points/              # Point and PointCurrentState: the logical values
+├── telemetry/           # Append-only samples and read-only history
+├── simulation/          # Deterministic climate runs and in-process runtime
 ├── seed/                # Explicit, idempotent Milestone 1 demo seed
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
