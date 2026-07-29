@@ -36,6 +36,15 @@ class SimulationRunRepository:
             select(SimulationRun).where(SimulationRun.id == run_id).with_for_update()
         )
 
+    async def list_running_for_update(self) -> list[SimulationRun]:
+        """Load and lock runs left active by this application process."""
+        statement = (
+            select(SimulationRun)
+            .where(SimulationRun.status == SimulationStatus.RUNNING)
+            .with_for_update()
+        )
+        return list(await self._session.scalars(statement))
+
     async def get_zone(self, control_zone_id: UUID) -> ControlZone | None:
         """Load the zone selected for a run."""
         return await self._session.get(ControlZone, control_zone_id)

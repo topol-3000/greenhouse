@@ -1,15 +1,26 @@
 """HTTP and lifecycle coverage for persisted simulation runs."""
 
+import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from fastapi import FastAPI
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+)
 
 from ai_greenhouse.simulation.exceptions import InvalidSimulationTransitionError
+from ai_greenhouse.simulation.runtime import FAILURE_REASON, SimulationRuntime
 from ai_greenhouse.simulation.service import SimulationRunService
+from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord
+from ai_greenhouse.telemetry.service import TelemetryService
 from tests.integration.factories import (
     assign,
     count_rows,
@@ -21,7 +32,62 @@ SIMULATION_RUNS_URL: str = "/api/v1/simulation-runs"
 NOW: datetime = datetime(2026, 7, 29, 15, 0, tzinfo=UTC)
 
 
-async def configured_climate_zone(http_client: httpx.AsyncClient) -> dict[str, Any]:
+class ManualTicker:
+    """Release ticks from tests and acknowledge their completed transactions."""
+
+    def __init__(self) -> None:
+        self._ticks: asyncio.Queue[None] = asyncio.Queue()
+        self._completed: asyncio.Queue[None] = asyncio.Queue()
+
+    async def wait(self) -> None:
+        """Wait for a test to release one tick."""
+        await self._ticks.get()
+
+    async def completed(self) -> None:
+        """Tell the releasing test that the whole step has ended."""
+        self._completed.put_nowait(None)
+
+    async def tick(self) -> None:
+        """Release exactly one tick and wait for its outcome without sleeping."""
+        self._ticks.put_nowait(None)
+        await self._completed.get()
+
+
+class ManualClock:
+    """Mutable timezone-aware clock used by runtime tests."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, *, seconds: int) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+def install_runtime(
+    app: FastAPI,
+    *,
+    clock: Callable[[], datetime],
+    ticker: ManualTicker,
+) -> SimulationRuntime:
+    """Install a runtime that follows the test transaction and manual time."""
+    runtime = SimulationRuntime(
+        lambda: cast(
+            async_sessionmaker[AsyncSession],
+            app.state.session_factory,
+        ),
+        clock=clock,
+        ticker_factory=lambda: ticker,
+    )
+    app.state.simulation_runtime = runtime
+    return runtime
+
+
+async def configured_climate(
+    http_client: httpx.AsyncClient,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Create a climate zone with the two required active numeric points."""
     growbox = await create_growbox(http_client)
     temperature = await create_point(
@@ -52,7 +118,13 @@ async def configured_climate_zone(http_client: httpx.AsyncClient) -> dict[str, A
     )
     assert temperature_assignment.status_code == 201, temperature_assignment.text
     assert humidity_assignment.status_code == 201, humidity_assignment.text
-    return growbox.control_zone
+    return growbox.control_zone, temperature, humidity
+
+
+async def configured_climate_zone(http_client: httpx.AsyncClient) -> dict[str, Any]:
+    """Create and return a valid climate zone."""
+    zone, _, _ = await configured_climate(http_client)
+    return zone
 
 
 def run_body(control_zone_id: str, **overrides: object) -> dict[str, object]:
@@ -225,3 +297,154 @@ async def test_terminal_run_cannot_advance(
 
     with pytest.raises(InvalidSimulationTransitionError):
         await service.advance_step(run_id, virtual_time=NOW + timedelta(minutes=3))
+
+
+async def test_runtime_start_ticks_for_virtual_hours_and_stops_without_more_samples(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    connection: AsyncConnection,
+) -> None:
+    zone, temperature, humidity = await configured_climate(http_client)
+    created = await create_run(http_client, zone["id"], speed_multiplier=3600)
+    ticker = ManualTicker()
+    clock = ManualClock(NOW)
+    runtime = install_runtime(app, clock=clock, ticker=ticker)
+
+    started = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/start")
+
+    assert started.status_code == 202, started.text
+    assert started.json()["status"] == "running"
+    assert started.json()["started_at"] == NOW.isoformat().replace("+00:00", "Z")
+    assert started.json()["virtual_time"] == NOW.isoformat().replace("+00:00", "Z")
+    assert started.json()["step_index"] == 1
+    for _ in range(4):
+        clock.advance(seconds=1)
+        await ticker.tick()
+
+    progressed = await http_client.get(f"{SIMULATION_RUNS_URL}/{created['id']}")
+    temperature_history = await http_client.get(f"/api/v1/points/{temperature['id']}/telemetry")
+    humidity_history = await http_client.get(f"/api/v1/points/{humidity['id']}/telemetry")
+
+    assert progressed.json()["step_index"] == 5
+    assert progressed.json()["virtual_time"] == (NOW + timedelta(hours=4)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert len(temperature_history.json()["items"]) == 5
+    assert len(humidity_history.json()["items"]) == 5
+    newest = temperature_history.json()["items"][0]
+    assert newest["observed_at"] == (NOW + timedelta(hours=4)).isoformat().replace("+00:00", "Z")
+    assert newest["received_at"] == (NOW + timedelta(seconds=4)).isoformat().replace("+00:00", "Z")
+
+    stopped = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/stop")
+    samples_at_response = await count_rows(connection, "telemetry_samples")
+
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()["status"] == "stopped"
+    assert runtime.running_task_count == 0
+    assert samples_at_response == 10
+    assert await count_rows(connection, "telemetry_samples") == samples_at_response
+
+
+async def test_double_start_returns_conflict_without_a_second_task_or_initial_step(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    connection: AsyncConnection,
+) -> None:
+    zone = await configured_climate_zone(http_client)
+    created = await create_run(http_client, zone["id"])
+    ticker = ManualTicker()
+    runtime = install_runtime(app, clock=ManualClock(NOW), ticker=ticker)
+
+    first = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/start")
+    second = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/start")
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "invalid_simulation_transition"
+    assert runtime.running_task_count == 1
+    assert await count_rows(connection, "telemetry_samples") == 2
+
+    stopped = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/stop")
+    assert stopped.status_code == 200
+
+
+async def test_mid_step_failure_rolls_back_both_points_and_progress_then_fails_run(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    connection: AsyncConnection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    zone, temperature, humidity = await configured_climate(http_client)
+    created = await create_run(http_client, zone["id"])
+    ticker = ManualTicker()
+    clock = ManualClock(NOW)
+    runtime = install_runtime(app, clock=clock, ticker=ticker)
+    started = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/start")
+    assert started.status_code == 202
+
+    original_record_sample = TelemetryService.record_sample
+    call_count = 0
+
+    async def fail_before_second_sample(
+        service: TelemetryService,
+        record: TelemetrySampleRecord,
+    ) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("database-password-must-not-be-persisted")
+        await original_record_sample(service, record)
+
+    monkeypatch.setattr(TelemetryService, "record_sample", fail_before_second_sample)
+    clock.advance(seconds=1)
+    await ticker.tick()
+
+    failed = await http_client.get(f"{SIMULATION_RUNS_URL}/{created['id']}")
+    temperature_state = await http_client.get(f"/api/v1/points/{temperature['id']}/state")
+    humidity_state = await http_client.get(f"/api/v1/points/{humidity['id']}/state")
+
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["failure_reason"] == FAILURE_REASON
+    assert "password" not in failed.json()["failure_reason"]
+    assert failed.json()["step_index"] == 1
+    assert failed.json()["virtual_time"] == NOW.isoformat().replace("+00:00", "Z")
+    assert await count_rows(connection, "telemetry_samples") == 2
+    assert temperature_state.json()["revision"] == 1
+    assert humidity_state.json()["revision"] == 1
+    assert runtime.running_task_count == 0
+
+
+async def test_startup_recovery_fails_every_persisted_running_run(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    session: AsyncSession,
+    connection: AsyncConnection,
+) -> None:
+    zone = await configured_climate_zone(http_client)
+    created = await create_run(http_client, zone["id"])
+    await SimulationRunService(session).mark_running(UUID(created["id"]), started_at=NOW)
+    await session.commit()
+    install_runtime(app, clock=ManualClock(NOW), ticker=ManualTicker())
+
+    async with app.router.lifespan_context(app):
+        statuses = (
+            await connection.execute(text("SELECT status, failure_reason FROM simulation_runs"))
+        ).all()
+
+    assert statuses == [("failed", "application_startup_interruption")]
+
+
+async def test_start_and_stop_of_a_missing_run_return_not_found(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+) -> None:
+    install_runtime(app, clock=ManualClock(NOW), ticker=ManualTicker())
+    missing = uuid4()
+
+    start = await http_client.post(f"{SIMULATION_RUNS_URL}/{missing}/start")
+    stop = await http_client.post(f"{SIMULATION_RUNS_URL}/{missing}/stop")
+
+    assert start.status_code == 404
+    assert start.json()["error"]["code"] == "simulation_run_not_found"
+    assert stop.status_code == 404
+    assert stop.json()["error"]["code"] == "simulation_run_not_found"

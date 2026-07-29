@@ -1,12 +1,13 @@
 """Focused schema and pure-model confidence for ``simple-climate-v1``."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from ai_greenhouse.simulation.climate import ClimateState, step_climate
 from ai_greenhouse.simulation.schemas import SimulationRunCreate
+from ai_greenhouse.simulation.service import simulation_sample_id
 
 
 def run_payload(**overrides: object) -> dict[str, object]:
@@ -87,3 +88,14 @@ def test_negative_virtual_delta_is_refused() -> None:
 
     with pytest.raises(ValueError):
         step_climate(ClimateState(temperature=20.0, humidity=65.0), parameters, -1.0)
+
+
+def test_simulation_sample_id_is_stable_and_scoped_to_the_step_and_point() -> None:
+    run_id = UUID("11111111-1111-1111-1111-111111111111")
+    point_id = UUID("22222222-2222-2222-2222-222222222222")
+
+    first = simulation_sample_id(run_id, 7, point_id)
+
+    assert first == simulation_sample_id(run_id, 7, point_id)
+    assert first != simulation_sample_id(run_id, 8, point_id)
+    assert first != simulation_sample_id(run_id, 7, uuid4())
