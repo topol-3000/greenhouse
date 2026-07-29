@@ -18,13 +18,19 @@ import os
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
 
 from ai_greenhouse.app import create_app
@@ -121,6 +127,34 @@ def app(database_settings: Settings, connection: AsyncConnection) -> FastAPI:
         join_transaction_mode="create_savepoint",
     )
     return application
+
+
+@pytest.fixture
+async def session(app: FastAPI) -> AsyncIterator[AsyncSession]:
+    """Yield a session on the test transaction, for services with no endpoint.
+
+    Almost every integration test drives the application through HTTP, which is
+    where its rules are visible. The telemetry write boundary has no endpoint —
+    its producer is in-process — so its tests call the service the way the
+    simulation runtime will, and this fixture stands in for the session that
+    ``get_session`` would otherwise have opened. Committing it is what the
+    request dependency does on success, and rolling it back is what the
+    dependency does when the handler raises.
+
+    Args:
+        app: The application whose session factory is bound to the test
+            transaction.
+
+    Yields:
+        An ``AsyncSession`` joined to the same transaction as ``http_client``,
+        so a test can mix the two and see one consistent database.
+    """
+    session_factory: async_sessionmaker[AsyncSession] = cast(
+        async_sessionmaker[AsyncSession],
+        app.state.session_factory,
+    )
+    async with session_factory() as open_session:
+        yield open_session
 
 
 @pytest.fixture

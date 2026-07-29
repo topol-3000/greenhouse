@@ -148,3 +148,28 @@ class PointCurrentStateRepository:
             The matching projection, or ``None`` when no row exists.
         """
         return await self._session.get(PointCurrentState, point_id)
+
+    async def get_for_update(self, point_id: UUID) -> PointCurrentState | None:
+        """Load the state projection of one point and lock its row.
+
+        The lock is held until the transaction ends, which is what lets the
+        telemetry service compare a sample's ``observed_at`` against the stored
+        one and act on the answer without a second writer changing it in
+        between. ``populate_existing`` is set because a row already in the
+        session's identity map would otherwise be returned with the values it
+        had before the lock was taken — a stale answer to the only question the
+        lock was acquired to ask.
+
+        Args:
+            point_id: The point whose projection to lock.
+
+        Returns:
+            The matching projection, or ``None`` when no row exists.
+        """
+        statement: Select[tuple[PointCurrentState]] = (
+            select(PointCurrentState)
+            .where(PointCurrentState.point_id == point_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return await self._session.scalar(statement)

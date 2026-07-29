@@ -22,7 +22,8 @@ tests/
     ├── factories.py            shared request builders — the setup of every test
     ├── api/                    cross-cutting HTTP behaviour, mostly without a database
     ├── topology/               sites, facilities, zones, assignments, configuration
-    └── points/                 points and their state projection
+    ├── points/                 points and their state projection
+    └── telemetry/              the write boundary that fills that projection
 ```
 
 Integration tests run against a real PostgreSQL instance and skip when
@@ -38,6 +39,7 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
 | `unit/test_pagination.py`, `unit/test_database_base.py` | Documented infrastructure contracts: the ordered and windowed statement, application-generated UUIDs, `timestamptz`, `VARCHAR` + `CHECK` enums, the naming convention. | Column definitions that no document names. |
 | `integration/api/` | The HTTP envelope itself — error shape, status mapping, pagination window, session commit and rollback — against a probe route, once. | Per-entity repetitions of those. |
 | `integration/<module>/` | Domain invariants through the real endpoints, each by its **refusal**; endpoint-specific filters; what PostgreSQL enforces and the service cannot. | Field validation, the pagination envelope or the archive lifecycle a second time. |
+| `integration/telemetry/` | The one module with no endpoint of its own: its tests call the service on the `session` fixture, commit or roll back as `get_session` would, and assert what reached the database. | The state response shape or the point rules a second time. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, and a `downgrade base` that really empties it. | Table shapes that a domain test already asserts. |
 | `integration/test_demo_seed.py`, `test_milestone_1_demo.py` | The seed is idempotent; the documented scenario works end to end in the documented order. | Any rule not visible from the scenario. |
 
