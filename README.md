@@ -10,9 +10,11 @@ The implemented domain is the complete digital growbox topology — sites,
 facilities, control zones, logical points, current-state projections,
 zone-point assignments, and a single-request facility configuration — plus
 append-only telemetry, current-state updates, telemetry history, deterministic
-climate simulation, persisted runs, and a single-process runtime. The runtime is
-Python 3.14 with PostgreSQL 18. Authentication, devices, control automation, and
-frontend are not included.
+climate simulation, persisted runs, a single-process runtime, and the first
+automation loop: an accepted temperature is evaluated by a hysteresis policy and
+turns a logical fan on or off through an idempotent command. The runtime is
+Python 3.14 with PostgreSQL 18. Authentication, devices, and a frontend are not
+included.
 
 ## Prerequisites
 
@@ -103,6 +105,13 @@ within their parent scope, creates no duplicates, and exits successfully. All
 writes use the same domain services as the HTTP API. The command emits
 structured JSON logs containing every created or found identifier; it does not
 run automatically when the API container starts.
+
+The same module carries the automation demonstration driver, which is described
+in its own walkthrough below:
+
+```bash
+docker compose run --rm api python -m ai_greenhouse.seed automation-demo
+```
 
 ## Topology demo walkthrough
 
@@ -217,6 +226,92 @@ while `received_at` is the real intake instant; after four ticks they differ by
 almost four hours. Both point states have `"quality": "simulated"`. Stop returns
 HTTP 200 with `"status": "stopped"`, and the final equality check proves that no
 new temperature sample appeared after the stop response.
+
+## Fan automation demo walkthrough
+
+The automation flow does not depend on the simulator. It reacts to whatever
+became a point's current temperature, so this walkthrough uses a controlled
+driver instead — three readings, no run to start, no model to wait for. A
+device sending the same three values would produce the same two commands.
+
+Run it against a fresh database:
+
+```bash
+docker compose up --build -d
+docker compose run --rm api python -m ai_greenhouse.seed demo
+
+FACILITY_ID=$(
+  curl -fsS 'http://localhost:8000/api/v1/facilities' |
+    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "basil-growbox"))'
+)
+ZONE_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/control-zones?facility_id=${FACILITY_ID}" |
+    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "main-climate"))'
+)
+POINTS=$(curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}")
+point_id() {
+  printf '%s' "${POINTS}" |
+    docker compose exec -T api python -c "import json,sys; print(next(x['id'] for x in json.load(sys.stdin)['items'] if x['code'] == '$1'))"
+}
+TEMPERATURE_ID=$(point_id air_temperature)
+FAN_POWER_ID=$(point_id fan_power)
+FAN_RUNNING_ID=$(point_id fan_running)
+
+LOOP=$(
+  curl -fsS -X POST 'http://localhost:8000/api/v1/control-loops' \
+    -H 'content-type: application/json' \
+    -d "{\"control_zone_id\":\"${ZONE_ID}\",\"measurement_point_id\":\"${TEMPERATURE_ID}\",\"control_point_id\":\"${FAN_POWER_ID}\",\"status_point_id\":\"${FAN_RUNNING_ID}\",\"lower_threshold\":24.0,\"upper_threshold\":26.0}"
+)
+printf '%s\n' "${LOOP}"
+LOOP_ID=$(
+  printf '%s' "${LOOP}" |
+    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+)
+
+docker compose run --rm api python -m ai_greenhouse.seed automation-demo
+
+curl -fsS "http://localhost:8000/api/v1/commands?control_loop_id=${LOOP_ID}"
+curl -fsS "http://localhost:8000/api/v1/points/${FAN_POWER_ID}/state"
+curl -fsS "http://localhost:8000/api/v1/points/${FAN_RUNNING_ID}/state"
+curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry"
+```
+
+The driver offers `27.0`, `25.0` and `23.0 °C` with increasing `observed_at`
+through the same in-process path the simulator uses, and the loop answers:
+
+```text
+27.0 °C   above the band, fan is off   ->  command fan_power = true
+25.0 °C   inside the band              ->  no command
+23.0 °C   below the band, fan is on    ->  command fan_power = false
+```
+
+The command list comes back newest first, so the `false` command is first. Each
+command names the temperature sample that caused it and the two samples the
+adapter wrote, and both `fan_power` and `fan_running` end at `"value": false`
+with `"quality": "simulated"` and `"revision": 2`. Nothing created a
+`SimulationRun`, and no client ever sent a command.
+
+The driver derives its sample identifiers, so running it a second time records
+`"outcome": "duplicate"` for all three readings and adds no command and no
+sample. That is also why it wants a fresh database: its readings carry fixed
+`observed_at` instants, and a temperature that already has newer telemetry would
+leave them in history without making them current.
+
+Follow one command's chain, or ask what a single measurement caused:
+
+```bash
+COMMAND_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/commands?control_loop_id=${LOOP_ID}&limit=1" |
+    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])'
+)
+curl -fsS "http://localhost:8000/api/v1/commands/${COMMAND_ID}"
+
+TRIGGER_ID=$(
+  curl -fsS "http://localhost:8000/api/v1/commands/${COMMAND_ID}" |
+    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["trigger_sample_id"])'
+)
+curl -fsS "http://localhost:8000/api/v1/commands?trigger_sample_id=${TRIGGER_ID}"
+```
 
 ## API conventions and errors
 
@@ -787,6 +882,62 @@ Rules worth knowing before calling it:
 | A point is archived, outside the zone, or of the wrong kind, type, metric or unit | 409 | `invalid_control_loop_point` |
 | Zone already has a loop | 409 | `control_loop_exists` |
 
+## Commands API
+
+A command is one fan state change that a loop decided on and the actuator
+applied. It is written only once the actuator has reported back, so a stored
+command means the change took effect and both result samples are readable.
+
+```http
+GET /api/v1/commands?control_loop_id=&trigger_sample_id=&limit=
+GET /api/v1/commands/{command_id}
+```
+
+```bash
+curl 'http://localhost:8000/api/v1/commands?control_loop_id=e03c6179-2f50-4cb4-d8ea-1b46094253af&limit=1'
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "2fbf6c2f-3ed5-5207-b1e5-069f900506a0",
+      "idempotency_key": "hysteresis-v1:e03c6179-2f50-4cb4-d8ea-1b46094253af:08cfcf34-39d1-5052-b4ca-964cc1d0e0ee:off",
+      "control_loop_id": "e03c6179-2f50-4cb4-d8ea-1b46094253af",
+      "trigger_sample_id": "08cfcf34-39d1-5052-b4ca-964cc1d0e0ee",
+      "target_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
+      "desired_value": false,
+      "result_control_sample_id": "a9ebc3cf-6392-5c54-bffe-23c09523928a",
+      "result_status_sample_id": "8a0a13a1-7ee3-52ed-8f2d-28f86f6026af",
+      "executed_at": "2026-07-30T09:02:14.668592Z",
+      "created_at": "2026-07-30T09:02:14.674984Z"
+    }
+  ]
+}
+```
+
+Rules worth knowing before calling it:
+
+- **there is no `POST`.** A command is a consequence of accepted telemetry, and
+  a client that could create one would be a second author of the fan state;
+- the list is newest first, ordered `created_at DESC, id DESC`, and carries no
+  total. `limit` defaults to `100` and must be between `1` and `1000`;
+- a command is created only when a *new* sample became the point's current
+  state. A re-delivered or late measurement changes nothing and decides nothing;
+- `idempotency_key` is
+  `hysteresis-v1:{control_loop_id}:{trigger_sample_id}:{on|off}` and is unique.
+  It is what bounds two concurrent evaluations of one measurement to one action;
+- the three sample identifiers are returned rather than embedded. Read the
+  samples themselves through `GET /api/v1/points/{point_id}/telemetry`;
+- only commands that were applied in full are stored. If the actuator fails, the
+  command and both result samples are rolled back together — and the temperature
+  that triggered them stays recorded, because it is what explains the attempt.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| `limit` outside `1..1000` | 422 | `validation_error` |
+| Command does not exist | 404 | `command_not_found` |
+
 ## Boundaries
 
 The seed deliberately creates a topology-only growbox — no simulation,
@@ -810,7 +961,7 @@ the system:
   inside the API application.
 
 Point state is filled by append-only telemetry, which the in-process simulator
-drives.
+and the controlled automation driver both drive through the same path.
 
 ## Configuration
 
@@ -925,7 +1076,7 @@ src/ai_greenhouse/
 ├── telemetry/           # Append-only samples and read-only history
 ├── simulation/          # Deterministic climate runs and in-process runtime
 ├── control/             # Hysteresis loops, commands and the actuator boundary
-├── seed/                # Explicit, idempotent demo growbox seed
+├── seed/                # Explicit demo growbox seed and automation driver
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```

@@ -190,6 +190,39 @@ class CommandRepository:
         """
         return await self._session.get(Command, command_id)
 
+    async def list_history(
+        self,
+        *,
+        control_loop_id: UUID | None,
+        trigger_sample_id: UUID | None,
+        limit: int,
+    ) -> list[Command]:
+        """Read a bounded, newest-first window of applied commands.
+
+        The complete order and limit are part of the statement. ``id DESC``
+        breaks ties between commands written in the same instant, so repeated
+        calls return the same order without Python sorting or slicing.
+
+        Args:
+            control_loop_id: Restricts the result to one loop when given.
+            trigger_sample_id: Restricts the result to the commands one
+                measurement caused when given.
+            limit: Maximum number of rows for PostgreSQL to return.
+
+        Returns:
+            Matching commands in ``created_at DESC, id DESC`` order.
+        """
+        statement: Select[tuple[Command]] = select(Command)
+        if control_loop_id is not None:
+            statement = statement.where(Command.control_loop_id == control_loop_id)
+        if trigger_sample_id is not None:
+            statement = statement.where(Command.trigger_sample_id == trigger_sample_id)
+        statement = statement.order_by(
+            Command.created_at.desc(),
+            Command.id.desc(),
+        ).limit(limit)
+        return list(await self._session.scalars(statement))
+
     async def exists_with_key(self, key: str) -> bool:
         """Answer whether one decision has already been applied.
 

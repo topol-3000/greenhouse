@@ -118,4 +118,7 @@ def test_demo_seed_process_exits_nonzero_when_database_is_unreachable() -> None:
     records: list[dict[str, Any]] = [
         json.loads(line) for line in result.stdout.splitlines() if line
     ]
-    assert any(record.get("event") == "demo_seed_failed" for record in records)
+    assert any(
+        record.get("event") == "seed_command_failed" and record.get("command") == "seed_demo"
+        for record in records
+    )

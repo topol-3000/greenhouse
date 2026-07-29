@@ -21,7 +21,7 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Uuid, desc
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_greenhouse.infrastructure.database.base import (
@@ -38,6 +38,18 @@ MAX_IDEMPOTENCY_KEY_LENGTH: int = 200
 is bounded rather than unbounded because it is unique and therefore indexed,
 and an unbounded unique text column is a size nothing controls.
 """
+
+COMMAND_HISTORY_INDEX_NAME: str = "ix_commands_control_loop_id_created_at_id"
+"""The command-list read of one loop, newest first, named after its query.
+
+``(control_loop_id, created_at DESC, id DESC)`` is the ordered window the list
+endpoint returns, with ``id`` breaking ties between commands written in one
+instant. No standalone index on ``control_loop_id`` accompanies it: that index
+would be a prefix of this one.
+"""
+
+COMMAND_TRIGGER_INDEX_NAME: str = "ix_commands_trigger_sample_id"
+"""The other query the list endpoint serves: what one measurement caused."""
 
 ZONE_LOOP_CONSTRAINT_NAME: str = "uq_control_loops_control_zone_id"
 """Unique constraint naming the one rule the table enforces on its own.
@@ -166,6 +178,15 @@ class Command(Base):
     """
 
     __tablename__ = "commands"
+    __table_args__ = (
+        Index(
+            COMMAND_HISTORY_INDEX_NAME,
+            "control_loop_id",
+            desc("created_at"),
+            desc("id"),
+        ),
+        Index(COMMAND_TRIGGER_INDEX_NAME, "trigger_sample_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True)
     idempotency_key: Mapped[str] = mapped_column(

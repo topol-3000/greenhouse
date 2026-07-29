@@ -82,3 +82,40 @@ class ControlLoopRead(BaseModel):
     lower_threshold: Threshold
     upper_threshold: Threshold
     created_at: datetime
+
+
+class CommandRead(BaseModel):
+    """One applied command, with every identifier its chain is followed by.
+
+    All three sample identifiers are returned rather than joined into embedded
+    samples: the telemetry history endpoint already reads a sample, and
+    duplicating it here would give one value two representations that could
+    disagree.
+    """
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    idempotency_key: str
+    control_loop_id: UUID
+    trigger_sample_id: UUID
+    target_point_id: UUID
+    desired_value: bool
+    result_control_sample_id: UUID
+    result_status_sample_id: UUID
+    executed_at: datetime
+    created_at: datetime
+
+
+class CommandListRead(BaseModel):
+    """A count-free collection of commands.
+
+    No total, like telemetry history and unlike the paged collections. The
+    command list is a bounded newest-first window over an append-only table, and
+    a ``COUNT(*)`` over it would grow with the history while answering a
+    question nobody asked.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[CommandRead]
