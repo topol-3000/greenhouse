@@ -5,13 +5,13 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from ai_greenhouse.core.config import get_settings
-from ai_greenhouse.infrastructure.database.metadata import metadata
-
 # Importing the domain models registers their tables on the shared metadata.
 # Without this, autogenerate and `alembic check` compare the database against
 # an empty metadata and report no changes. Every new module's models.py must be
 # added here.
+from ai_greenhouse.control import models as control_models  # noqa: F401
+from ai_greenhouse.core.config import get_settings
+from ai_greenhouse.infrastructure.database.metadata import metadata
 from ai_greenhouse.points import models as points_models  # noqa: F401
 from ai_greenhouse.simulation import models as simulation_models  # noqa: F401
 from ai_greenhouse.telemetry import models as telemetry_models  # noqa: F401

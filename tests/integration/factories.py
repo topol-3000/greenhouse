@@ -21,6 +21,7 @@ FACILITIES_URL: str = "/api/v1/facilities"
 CONTROL_ZONES_URL: str = "/api/v1/control-zones"
 POINTS_URL: str = "/api/v1/points"
 SIMULATION_RUNS_URL: str = "/api/v1/simulation-runs"
+CONTROL_LOOPS_URL: str = "/api/v1/control-loops"
 
 DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     SITES_URL,
@@ -28,8 +29,55 @@ DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     CONTROL_ZONES_URL,
     POINTS_URL,
     SIMULATION_RUNS_URL,
+    CONTROL_LOOPS_URL,
 )
 """Every collection a client can reach. None of them accepts ``DELETE``."""
+
+LOWER_THRESHOLD: float = 24.0
+UPPER_THRESHOLD: float = 26.0
+"""The hysteresis band of the documented demonstration, in ``°C``."""
+
+AUTOMATION_POINTS: tuple[tuple[str, dict[str, Any]], ...] = (
+    (
+        "primary_measurement",
+        {
+            "code": "air_temperature",
+            "name": "Air Temperature",
+            "point_kind": "measurement",
+            "metric_type": "air_temperature",
+            "data_type": "float",
+            "unit": "°C",
+        },
+    ),
+    (
+        "control_output",
+        {
+            "code": "fan_power",
+            "name": "Fan Power",
+            "point_kind": "control",
+            "metric_type": "fan_power",
+            "data_type": "boolean",
+            "unit": None,
+        },
+    ),
+    (
+        "status_feedback",
+        {
+            "code": "fan_running",
+            "name": "Fan Running",
+            "point_kind": "status",
+            "metric_type": "fan_running",
+            "data_type": "boolean",
+            "unit": None,
+        },
+    ),
+)
+"""The three points a ``hysteresis-v1`` loop binds, with their zone roles.
+
+Deliberately the same codes, kinds and metrics the demo seed creates: a loop
+that could only be configured against test-only points would prove nothing
+about the growbox the milestone demonstrates.
+"""
 
 
 def assignments_url(zone_id: str) -> str:
@@ -236,6 +284,86 @@ async def create_growbox(http_client: httpx.AsyncClient, **overrides: Any) -> Gr
     facility = await create_facility(http_client, site["id"])
     control_zone = await create_control_zone(http_client, facility["id"])
     return Growbox(site, facility, control_zone)
+
+
+class AutomationGrowbox(NamedTuple):
+    """A climate zone wired with the three points a control loop needs."""
+
+    site: dict[str, Any]
+    facility: dict[str, Any]
+    control_zone: dict[str, Any]
+    points: dict[str, dict[str, Any]]
+
+
+async def create_automation_growbox(
+    http_client: httpx.AsyncClient,
+    **overrides: Any,
+) -> AutomationGrowbox:
+    """Build the growbox every control-loop and automation test starts from.
+
+    Args:
+        http_client: The client under test.
+        **overrides: Fields replacing the defaults of the *site* body, so a
+            second growbox can be built alongside the first.
+
+    Returns:
+        The created topology and its points, keyed by point code.
+    """
+    site, facility, control_zone = await create_growbox(http_client, **overrides)
+    points: dict[str, dict[str, Any]] = {}
+    for role, definition in AUTOMATION_POINTS:
+        point = await create_point(
+            http_client,
+            site["id"],
+            facility_id=facility["id"],
+            **definition,
+        )
+        await create_assignment(http_client, control_zone["id"], point["id"], role)
+        points[point["code"]] = point
+    return AutomationGrowbox(site, facility, control_zone, points)
+
+
+def control_loop_body(growbox: AutomationGrowbox, **overrides: Any) -> dict[str, Any]:
+    """Build a valid control-loop creation body for a wired growbox.
+
+    Args:
+        growbox: The growbox whose zone and points the loop binds.
+        **overrides: Fields replacing the defaults.
+
+    Returns:
+        The request body, ready to be posted.
+    """
+    return {
+        "control_zone_id": growbox.control_zone["id"],
+        "measurement_point_id": growbox.points["air_temperature"]["id"],
+        "control_point_id": growbox.points["fan_power"]["id"],
+        "status_point_id": growbox.points["fan_running"]["id"],
+        "lower_threshold": LOWER_THRESHOLD,
+        "upper_threshold": UPPER_THRESHOLD,
+    } | overrides
+
+
+async def create_control_loop(
+    http_client: httpx.AsyncClient,
+    growbox: AutomationGrowbox,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Configure a control loop and return its representation.
+
+    Args:
+        http_client: The client under test.
+        growbox: The growbox whose zone and points the loop binds.
+        **overrides: Fields replacing the defaults of the request body.
+
+    Returns:
+        The decoded response body of the created loop.
+    """
+    response = await http_client.post(
+        CONTROL_LOOPS_URL,
+        json=control_loop_body(growbox, **overrides),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
 
 
 async def archive(http_client: httpx.AsyncClient, url: str) -> dict[str, Any]:

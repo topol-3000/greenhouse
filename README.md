@@ -715,6 +715,78 @@ replaces the current value, so a re-delivered sample leaves it alone.
 | Site or facility is archived | 409 | `parent_archived` |
 | `PATCH` names a field that defines the point | 409 | `immutable_field` |
 
+## Control loops API
+
+A control loop is one immutable automation rule of one climate zone: which
+point it watches, which point it drives, which point reports back, and the
+hysteresis band it decides on. It names points and never devices, so replacing
+the hardware behind `fan_power` changes nothing here.
+
+```http
+POST   /api/v1/control-loops
+GET    /api/v1/control-loops?control_zone_id=&limit=&offset=
+GET    /api/v1/control-loops/{control_loop_id}
+```
+
+Configure the loop of the demo growbox:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/control-loops \
+  -H 'content-type: application/json' \
+  -d '{"control_zone_id": "3a7f1c22-9e04-4b6d-8f31-7c05a2e9d641",
+       "measurement_point_id": "b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40",
+       "control_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
+       "status_point_id": "d92b5068-1e4f-4ba3-c7d9-0a35f8142b6e",
+       "lower_threshold": 24.0, "upper_threshold": 26.0}'
+```
+
+```json
+{
+  "id": "e03c6179-2f50-4cb4-d8ea-1b46094253af",
+  "control_zone_id": "3a7f1c22-9e04-4b6d-8f31-7c05a2e9d641",
+  "measurement_point_id": "b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40",
+  "control_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
+  "status_point_id": "d92b5068-1e4f-4ba3-c7d9-0a35f8142b6e",
+  "policy_type": "hysteresis-v1",
+  "lower_threshold": 24.0,
+  "upper_threshold": 26.0,
+  "created_at": "2026-07-30T08:12:44.201883Z"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `policy_type` is fixed at `hysteresis-v1` and is not accepted in the request.
+  There is one policy, and a field a client can only set to a single value is a
+  field that will be set to something else the moment a second policy exists;
+- a zone gets **one** loop. A second one is refused rather than accepted
+  alongside the first, because a command already applied records the
+  configuration it was decided under;
+- the zone has to be an active `climate` zone;
+- each of the three points has to be active and assigned to *that* zone in the
+  role the loop needs it in: `measurement_point_id` as its `primary_measurement`,
+  `control_point_id` as a `control_output`, `status_point_id` as a
+  `status_feedback`;
+- the measurement point is numeric, carries `metric_type` `air_temperature` and
+  is measured in `°C` — nothing in the flow converts units, so a point reporting
+  Fahrenheit would be compared against Celsius thresholds;
+- the control and status points are `boolean` and carry `metric_type`
+  `fan_power` and `fan_running`;
+- `lower_threshold` must be strictly below `upper_threshold`. A band of zero
+  width has no hysteresis left in it;
+- there is no `PATCH` and no `DELETE`. The configuration is what a decision was
+  taken under, so it is written once and read afterwards.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unordered band | 422 | `validation_error` |
+| Loop does not exist | 404 | `control_loop_not_found` |
+| `control_zone_id` references no zone | 404 | `control_zone_not_found` |
+| A point identifier references no point | 404 | `point_not_found` |
+| Zone is archived or is not a climate zone | 409 | `invalid_control_loop_zone` |
+| A point is archived, outside the zone, or of the wrong kind, type, metric or unit | 409 | `invalid_control_loop_point` |
+| Zone already has a loop | 409 | `control_loop_exists` |
+
 ## Boundaries
 
 The seed deliberately creates a topology-only growbox — no simulation,
@@ -727,7 +799,9 @@ the system:
 - no authentication or authorization;
 - no devices, channels, bindings, or physical addresses;
 - no public telemetry ingestion endpoint, and no device or edge infrastructure;
-- no commands, control loops, or UI;
+- no commands and no UI;
+- no policy versions, schedules, PID or rules engine: a control loop carries
+  its own `hysteresis-v1` thresholds and nothing else;
 - no distributed workers: the simulation runtime is single-process and lives
   inside the API application.
 
@@ -846,6 +920,7 @@ src/ai_greenhouse/
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
 ├── simulation/          # Deterministic climate runs and in-process runtime
+├── control/             # Immutable hysteresis control loops
 ├── seed/                # Explicit, idempotent demo growbox seed
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe

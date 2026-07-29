@@ -1,0 +1,114 @@
+"""ORM models of the control module.
+
+One rule governs the ``control_loops`` table: a row, once written, is never
+changed. A loop is the configuration a decision was taken under, and a command
+already applied refers back to it, so there is no ``updated_at``, no
+``status`` and no endpoint that edits or removes a row.
+
+The policy is embedded rather than referenced. ``policy_type`` plus the two
+thresholds are the whole of ``hysteresis-v1``, and a separate policy table
+would add a second entity, a version and an assignment before anything needs to
+address a policy on its own.
+"""
+
+from datetime import datetime
+from decimal import Decimal
+from enum import StrEnum
+from uuid import UUID
+
+from sqlalchemy import DateTime, ForeignKey, Numeric, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ai_greenhouse.infrastructure.database.base import (
+    Base,
+    UUIDPrimaryKeyMixin,
+    enum_column,
+    utc_now,
+)
+
+ZONE_LOOP_CONSTRAINT_NAME: str = "uq_control_loops_control_zone_id"
+"""Unique constraint naming the one rule the table enforces on its own.
+
+M3 allows exactly one loop per control zone, and the index behind the
+constraint also serves the ``?control_zone_id=`` list filter. Nothing else
+queries this table yet, so nothing else is indexed.
+"""
+
+
+class ControlPolicyType(StrEnum):
+    """Policy a control loop evaluates.
+
+    One member today. It is an enum rather than a constant string so that the
+    stored value carries a ``CHECK`` constraint like every other enum column,
+    and so a second policy arrives as a member instead of as a free-text value
+    nothing validates.
+    """
+
+    HYSTERESIS_V1 = "hysteresis-v1"
+
+
+class ControlLoop(UUIDPrimaryKeyMixin, Base):
+    """One immutable automation rule binding three points of a climate zone.
+
+    The loop names points, never devices or channels: which hardware serves
+    ``control_point_id`` is a question the automation flow never asks, which is
+    what lets the loopback adapter be replaced by an Edge adapter without
+    touching this table.
+
+    Attributes:
+        control_zone_id: The climate zone the loop automates. Unique, because
+            M3 allows one loop per zone.
+        measurement_point_id: Numeric ``air_temperature`` point whose accepted
+            samples trigger evaluation.
+        control_point_id: Boolean ``fan_power`` point the command is addressed
+            to.
+        status_point_id: Boolean ``fan_running`` point the adapter reports back
+            on. Never an input of the policy.
+        policy_type: The evaluated policy, fixed at ``hysteresis-v1``.
+        lower_threshold: Temperature strictly below which the fan is switched
+            off, in the measurement point's unit.
+        upper_threshold: Temperature strictly above which the fan is switched
+            on, in the measurement point's unit.
+        created_at: Instant the loop was configured.
+    """
+
+    __tablename__ = "control_loops"
+
+    control_zone_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("control_zones.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    measurement_point_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    control_point_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status_point_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    policy_type: Mapped[ControlPolicyType] = enum_column(
+        ControlPolicyType,
+        constraint_name="policy_type",
+        nullable=False,
+        default=ControlPolicyType.HYSTERESIS_V1,
+    )
+    lower_threshold: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
+    upper_threshold: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    def __repr__(self) -> str:
+        """Return a debug-friendly representation without the full row."""
+        return f"ControlLoop(id={self.id!r}, control_zone_id={self.control_zone_id!r})"

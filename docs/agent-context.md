@@ -24,6 +24,8 @@ the target and are opened only when the current task needs them.
   write boundary, current-state projection updates, and read-only history.
 - `simulation` owns `SimulationRun` persistence, the pure `simple-climate-v1`
   model, and the single-process in-application runtime that drives runs.
+- `control` owns the immutable `hysteresis-v1` `ControlLoop`: one per climate
+  zone, binding a temperature, a fan-power and a fan-running point.
 - `seed` creates the idempotent basil-growbox demo through domain services.
 - Domain modules use `models.py`, `schemas.py`, `repository.py`, `service.py`,
   and `exceptions.py` when those layers are needed.
@@ -38,10 +40,11 @@ the target and are opened only when the current task needs them.
 
 Implemented: the growbox topology with stable logical point IDs, append-only
 telemetry, the current-state projection, telemetry history, simulation runs, the
-deterministic climate model, and the in-application runtime.
+deterministic climate model, the in-application runtime, and immutable
+hysteresis control-loop configuration.
 
-Out of scope: commands, control loops, devices, Edge/MQTT, authentication, UI,
-distributed workers, and a generic public ingestion endpoint.
+Out of scope: commands, devices, Edge/MQTT, authentication, UI, distributed
+workers, and a generic public ingestion endpoint.
 
 ## Invariants and development rules
 
