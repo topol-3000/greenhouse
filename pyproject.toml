@@ -33,6 +33,9 @@ packages = ["src/ai_greenhouse"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The project root is on the path so the integration tests can import their
+# shared request builders as `tests.integration.factories`.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
@@ -41,3 +44,8 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+# `tests` is a package of this repository, not a dependency: the integration
+# tests import their shared request builders from `tests.integration.factories`.
+known-first-party = ["ai_greenhouse", "tests"]

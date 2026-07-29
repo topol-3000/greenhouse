@@ -21,10 +21,17 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-SITES_URL = "/api/v1/sites"
-FACILITIES_URL = "/api/v1/facilities"
-CONTROL_ZONES_URL = "/api/v1/control-zones"
-POINTS_URL = "/api/v1/points"
+from tests.integration.factories import (
+    CONTROL_ZONES_URL,
+    POINTS_URL,
+    archive,
+    configuration_url,
+    create_assignment,
+    create_control_zone,
+    create_facility,
+    create_point,
+    create_site,
+)
 
 MAX_CONFIGURATION_SELECTS: int = 6
 """Ceiling on the SELECTs of one configuration request.
@@ -82,140 +89,6 @@ DEMO_ROLES: list[str] = [
 """The role each demonstration point plays in the Main Climate zone."""
 
 
-def configuration_url(facility_id: str) -> str:
-    """Return the configuration URL of one facility.
-
-    Args:
-        facility_id: The facility to describe.
-
-    Returns:
-        The configuration URL of that facility.
-    """
-    return f"{FACILITIES_URL}/{facility_id}/configuration"
-
-
-async def create_site(http_client: httpx.AsyncClient, **overrides: Any) -> dict[str, Any]:
-    """Create a site and return its representation.
-
-    Args:
-        http_client: The client under test.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created site.
-    """
-    payload: dict[str, Any] = {"name": "Home", "code": "home"} | overrides
-    response = await http_client.post(SITES_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_facility(
-    http_client: httpx.AsyncClient,
-    site_id: str,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Create a facility and return its representation.
-
-    Args:
-        http_client: The client under test.
-        site_id: The site to create the facility in.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created facility.
-    """
-    payload: dict[str, Any] = {
-        "site_id": site_id,
-        "name": "Basil Growbox",
-        "code": "basil-growbox",
-        "facility_type": "growbox",
-    } | overrides
-    response = await http_client.post(FACILITIES_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_control_zone(
-    http_client: httpx.AsyncClient,
-    facility_id: str,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Create a control zone and return its representation.
-
-    Args:
-        http_client: The client under test.
-        facility_id: The facility to create the zone in.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created zone.
-    """
-    payload: dict[str, Any] = {
-        "facility_id": facility_id,
-        "name": "Main Climate",
-        "code": "main-climate",
-        "zone_type": "climate",
-    } | overrides
-    response = await http_client.post(CONTROL_ZONES_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_point(
-    http_client: httpx.AsyncClient,
-    site_id: str,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Create a point and return its representation.
-
-    Args:
-        http_client: The client under test.
-        site_id: The site the point belongs to.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created point.
-    """
-    payload: dict[str, Any] = {
-        "site_id": site_id,
-        "code": "air_temperature",
-        "name": "Air temperature",
-        "point_kind": "measurement",
-        "metric_type": "air_temperature",
-        "data_type": "float",
-        "unit": "°C",
-    } | overrides
-    response = await http_client.post(POINTS_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def assign(
-    http_client: httpx.AsyncClient,
-    zone_id: str,
-    point_id: str,
-    role: str,
-) -> dict[str, Any]:
-    """Assign a point to a zone and return the created link.
-
-    Args:
-        http_client: The client under test.
-        zone_id: The zone to assign the point to.
-        point_id: The point to assign.
-        role: The role it plays in the zone.
-
-    Returns:
-        The decoded response body of the created assignment.
-    """
-    response = await http_client.post(
-        f"{CONTROL_ZONES_URL}/{zone_id}/points",
-        json={"point_id": point_id, "role": role},
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
 async def build_demo_growbox(
     http_client: httpx.AsyncClient,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
@@ -236,7 +109,7 @@ async def build_demo_growbox(
         for fields in DEMO_POINTS
     ]
     for point, role in zip(points, DEMO_ROLES, strict=True):
-        await assign(http_client, control_zone["id"], point["id"], role)
+        await create_assignment(http_client, control_zone["id"], point["id"], role)
     return site, facility, control_zone, points
 
 
@@ -285,7 +158,7 @@ async def build_large_growbox(
                 metric_type=f"metric_{point_index}",
             )
             role: str = "primary_measurement" if point_index == 0 else "secondary_measurement"
-            await assign(http_client, control_zone["id"], point["id"], role)
+            await create_assignment(http_client, control_zone["id"], point["id"], role)
     return facility
 
 
@@ -327,6 +200,7 @@ def count_selects(connection: AsyncConnection) -> Iterator[list[str]]:
 
 
 async def test_the_demo_growbox_is_returned_whole(http_client: httpx.AsyncClient) -> None:
+    """Asserted field by field, including the empty state of every point."""
     site, facility, control_zone, points = await build_demo_growbox(http_client)
 
     response = await http_client.get(configuration_url(facility["id"]))
@@ -377,19 +251,6 @@ async def test_the_demo_growbox_is_returned_whole(http_client: httpx.AsyncClient
         }
         for point, fields in zip(points, DEMO_POINTS, strict=True)
     ]
-
-
-async def test_every_point_starts_without_a_value(http_client: httpx.AsyncClient) -> None:
-    """Milestone 1 creates no values, and the document must not pretend otherwise."""
-    _site, facility, _control_zone, _points = await build_demo_growbox(http_client)
-
-    response = await http_client.get(configuration_url(facility["id"]))
-
-    states = [point["state"] for point in response.json()["points"]]
-    assert len(states) == 4
-    assert all(
-        state == {"value": None, "quality": "no_data", "observed_at": None} for state in states
-    )
 
 
 async def test_an_empty_facility_is_described_as_empty(http_client: httpx.AsyncClient) -> None:
@@ -446,7 +307,12 @@ async def test_a_point_of_the_whole_site_is_described_when_a_zone_uses_it(
     facility = await create_facility(http_client, site["id"])
     control_zone = await create_control_zone(http_client, facility["id"])
     site_point = await create_point(http_client, site["id"], code="outdoor_temperature")
-    await assign(http_client, control_zone["id"], site_point["id"], "secondary_measurement")
+    await create_assignment(
+        http_client,
+        control_zone["id"],
+        site_point["id"],
+        "secondary_measurement",
+    )
 
     response = await http_client.get(configuration_url(facility["id"]))
 
@@ -464,11 +330,8 @@ async def test_archived_zones_and_points_are_left_out(http_client: httpx.AsyncCl
         code="old-zone",
         zone_type="lighting",
     )
-    await http_client.patch(
-        f"{CONTROL_ZONES_URL}/{retired_zone['id']}",
-        json={"status": "archived"},
-    )
-    await http_client.patch(f"{POINTS_URL}/{points[1]['id']}", json={"status": "archived"})
+    await archive(http_client, f"{CONTROL_ZONES_URL}/{retired_zone['id']}")
+    await archive(http_client, f"{POINTS_URL}/{points[1]['id']}")
 
     response = await http_client.get(configuration_url(facility["id"]))
 
@@ -497,11 +360,8 @@ async def test_archived_zones_and_points_are_included_on_request(
         code="old-zone",
         zone_type="lighting",
     )
-    await http_client.patch(
-        f"{CONTROL_ZONES_URL}/{retired_zone['id']}",
-        json={"status": "archived"},
-    )
-    await http_client.patch(f"{POINTS_URL}/{points[1]['id']}", json={"status": "archived"})
+    await archive(http_client, f"{CONTROL_ZONES_URL}/{retired_zone['id']}")
+    await archive(http_client, f"{POINTS_URL}/{points[1]['id']}")
 
     response = await http_client.get(
         configuration_url(facility["id"]),
@@ -538,8 +398,8 @@ async def test_a_point_of_several_zones_is_described_once(
         zone_type="safety",
     )
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
-    await assign(http_client, climate["id"], point["id"], "primary_measurement")
-    await assign(http_client, safety["id"], point["id"], "safety_interlock")
+    await create_assignment(http_client, climate["id"], point["id"], "primary_measurement")
+    await create_assignment(http_client, safety["id"], point["id"], "safety_interlock")
 
     response = await http_client.get(configuration_url(facility["id"]))
 

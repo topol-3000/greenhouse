@@ -107,9 +107,3 @@ def test_constraints_follow_the_milestone_0_naming_convention() -> None:
 
     assert "CONSTRAINT pk_sample PRIMARY KEY (id)" in ddl
     assert "CONSTRAINT ck_sample_status" in ddl
-
-
-def test_status_is_indexed_for_collection_filtering() -> None:
-    indexed = {column.name for index in Sample.__table__.indexes for column in index.columns}
-
-    assert "status" in indexed

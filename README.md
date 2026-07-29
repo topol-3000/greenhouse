@@ -781,3 +781,9 @@ in [`migrations/env.py`](migrations/env.py), otherwise autogenerate and
 
 Integration tests run against a real PostgreSQL instance, migrate through
 Alembic, and isolate each test by rolling back a surrounding transaction.
+`tests/integration/test_migrations.py` goes further and checks every migration
+on a scratch database of its own: `upgrade head` on an empty database, a clean
+`alembic check`, and a `downgrade base` that really leaves nothing behind.
+
+[`tests/README.md`](tests/README.md) states which layer asserts what. Read it
+before adding tests — it is what keeps one rule from being checked four times.

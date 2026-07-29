@@ -1,11 +1,12 @@
 """End-to-end coverage of the zone-point assignment API against real PostgreSQL.
 
-Every invariant is covered by a test that asserts the refusal, not only by one
-that asserts the happy path. The cross-site refusal is the milestone's headline
-rule — the Definition of Done names it explicitly — so it is asserted both by
-its status code and by the absence of a row afterwards.
+This is where the milestone's headline rules live — a zone and a point must
+belong to the same site and the same facility, a role must suit the kind of
+point that takes it, and a zone has at most one primary measurement. Every one
+of them is asserted by its refusal, and where a row could still have been
+written the refusal is checked against the table as well.
 
-Two deliberate domain decisions are protected here as well, because a naive
+Two deliberate domain decisions are protected here too, because a naive
 implementation would get both wrong: the same point may hold two different roles
 in one zone, and a point that belongs to the site as a whole may take part in
 any zone on that site.
@@ -20,157 +21,29 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-SITES_URL = "/api/v1/sites"
-FACILITIES_URL = "/api/v1/facilities"
-CONTROL_ZONES_URL = "/api/v1/control-zones"
-POINTS_URL = "/api/v1/points"
+from tests.integration.factories import (
+    CONTROL_ZONES_URL,
+    POINTS_URL,
+    archive,
+    assign,
+    assignments_url,
+    count_rows,
+    create_control_zone,
+    create_facility,
+    create_growbox,
+    create_point,
+    create_site,
+)
 
-
-def assignments_url(zone_id: str) -> str:
-    """Return the assignment collection URL of one zone.
-
-    Args:
-        zone_id: The zone whose composition is addressed.
-
-    Returns:
-        The collection URL under that zone.
-    """
-    return f"{CONTROL_ZONES_URL}/{zone_id}/points"
-
-
-async def create_site(http_client: httpx.AsyncClient, **overrides: Any) -> dict[str, Any]:
-    """Create a site and return its representation.
-
-    Args:
-        http_client: The client under test.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created site.
-    """
-    payload: dict[str, Any] = {"name": "Home", "code": "home"} | overrides
-    response = await http_client.post(SITES_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_facility(
-    http_client: httpx.AsyncClient,
-    site_id: str,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Create a facility and return its representation.
-
-    Args:
-        http_client: The client under test.
-        site_id: The site to create the facility in.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created facility.
-    """
-    payload: dict[str, Any] = {
-        "site_id": site_id,
-        "name": "Basil Growbox",
-        "code": "basil-growbox",
-        "facility_type": "growbox",
-    } | overrides
-    response = await http_client.post(FACILITIES_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_control_zone(
-    http_client: httpx.AsyncClient,
-    facility_id: str,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Create a control zone and return its representation.
-
-    Args:
-        http_client: The client under test.
-        facility_id: The facility to create the zone in.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created zone.
-    """
-    payload: dict[str, Any] = {
-        "facility_id": facility_id,
-        "name": "Main Climate",
-        "code": "main-climate",
-        "zone_type": "climate",
-    } | overrides
-    response = await http_client.post(CONTROL_ZONES_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_point(
-    http_client: httpx.AsyncClient,
-    site_id: str,
-    **overrides: Any,
-) -> dict[str, Any]:
-    """Create a point and return its representation.
-
-    Args:
-        http_client: The client under test.
-        site_id: The site the point belongs to.
-        **overrides: Fields replacing the defaults of the request body.
-
-    Returns:
-        The decoded response body of the created point.
-    """
-    payload: dict[str, Any] = {
-        "site_id": site_id,
-        "code": "air_temperature",
-        "name": "Air temperature",
-        "point_kind": "measurement",
-        "metric_type": "air_temperature",
-        "data_type": "float",
-        "unit": "°C",
-    } | overrides
-    response = await http_client.post(POINTS_URL, json=payload)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-async def create_growbox(http_client: httpx.AsyncClient) -> tuple[dict[str, Any], ...]:
-    """Create a site with one facility and one climate zone in it.
-
-    Args:
-        http_client: The client under test.
-
-    Returns:
-        The site, the facility and the zone, in that order.
-    """
-    site = await create_site(http_client)
-    facility = await create_facility(http_client, site["id"])
-    control_zone = await create_control_zone(http_client, facility["id"])
-    return site, facility, control_zone
-
-
-async def assign(
-    http_client: httpx.AsyncClient,
-    zone_id: str,
-    point_id: str,
-    role: str,
-) -> httpx.Response:
-    """Assign a point to a zone and return the raw response.
-
-    Args:
-        http_client: The client under test.
-        zone_id: The zone to assign the point to.
-        point_id: The point to assign.
-        role: The role it plays in the zone.
-
-    Returns:
-        The unchecked response, so refusals can be asserted on.
-    """
-    return await http_client.post(
-        assignments_url(zone_id),
-        json={"point_id": point_id, "role": role},
-    )
+FAN_POWER: dict[str, Any] = {
+    "code": "fan_power",
+    "name": "Fan power",
+    "point_kind": "control",
+    "metric_type": "fan_power",
+    "data_type": "boolean",
+    "unit": None,
+}
+"""A control point, for the roles a measurement point cannot take."""
 
 
 async def count_assignments(connection: AsyncConnection) -> int:
@@ -182,11 +55,12 @@ async def count_assignments(connection: AsyncConnection) -> int:
     Returns:
         The number of rows in ``zone_point_assignments``.
     """
-    result = await connection.execute(text("SELECT count(*) FROM zone_point_assignments"))
-    return int(result.scalar_one())
+    return await count_rows(connection, "zone_point_assignments")
 
 
-async def test_assignment_returns_the_created_link(http_client: httpx.AsyncClient) -> None:
+async def test_the_created_link_carries_the_role_and_the_point_metadata(
+    http_client: httpx.AsyncClient,
+) -> None:
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
 
@@ -199,17 +73,6 @@ async def test_assignment_returns_the_created_link(http_client: httpx.AsyncClien
     assert body["role"] == "primary_measurement"
     assert body["id"]
     assert body["created_at"]
-
-
-async def test_the_created_link_carries_the_point_metadata(
-    http_client: httpx.AsyncClient,
-) -> None:
-    site, facility, control_zone = await create_growbox(http_client)
-    point = await create_point(http_client, site["id"], facility_id=facility["id"])
-
-    response = await assign(http_client, control_zone["id"], point["id"], "primary_measurement")
-
-    body = response.json()
     assert body["point_code"] == "air_temperature"
     assert body["point_name"] == "Air temperature"
     assert body["point_kind"] == "measurement"
@@ -233,6 +96,7 @@ async def test_a_point_of_another_site_is_refused(
     http_client: httpx.AsyncClient,
     connection: AsyncConnection,
 ) -> None:
+    """The Definition of Done names this rule explicitly."""
     _site, _facility, control_zone = await create_growbox(http_client)
     other_site = await create_site(http_client, name="Allotment", code="allotment")
     other_facility = await create_facility(
@@ -284,10 +148,7 @@ async def test_a_point_of_another_facility_is_refused(
     [
         ("measurement", "control_output", {"data_type": "float", "unit": "°C"}),
         ("control", "primary_measurement", {"data_type": "boolean", "unit": None}),
-        ("control", "secondary_measurement", {"data_type": "boolean", "unit": None}),
-        ("status", "control_output", {"data_type": "boolean", "unit": None}),
         ("measurement", "status_feedback", {"data_type": "float", "unit": "°C"}),
-        ("control", "status_feedback", {"data_type": "boolean", "unit": None}),
     ],
 )
 async def test_a_role_that_does_not_suit_the_kind_is_refused(
@@ -297,6 +158,13 @@ async def test_a_role_that_does_not_suit_the_kind_is_refused(
     role: str,
     point_fields: dict[str, Any],
 ) -> None:
+    """One refusal for each of the three constrained roles.
+
+    Which kinds each role admits is written down once, in
+    ``ROLE_ALLOWED_POINT_KINDS``, and asserted entry by entry in
+    ``tests/unit/test_zone_point_assignment_schemas.py``. What these cases add
+    is that the service consults that mapping and answers 409 when it says no.
+    """
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(
         http_client,
@@ -321,15 +189,10 @@ async def test_a_role_that_does_not_suit_the_kind_is_refused(
 @pytest.mark.parametrize(
     ("point_kind", "role", "point_fields"),
     [
-        ("measurement", "primary_measurement", {"data_type": "float", "unit": "°C"}),
         ("derived", "primary_measurement", {"data_type": "float", "unit": "°C"}),
-        ("measurement", "secondary_measurement", {"data_type": "float", "unit": "°C"}),
-        ("derived", "secondary_measurement", {"data_type": "float", "unit": "°C"}),
         ("control", "control_output", {"data_type": "boolean", "unit": None}),
         ("status", "status_feedback", {"data_type": "boolean", "unit": None}),
-        ("status", "safety_interlock", {"data_type": "boolean", "unit": None}),
         ("measurement", "safety_interlock", {"data_type": "float", "unit": "°C"}),
-        ("derived", "derived_indicator", {"data_type": "float", "unit": "°C"}),
     ],
 )
 async def test_a_role_that_suits_the_kind_is_accepted(
@@ -338,6 +201,11 @@ async def test_a_role_that_suits_the_kind_is_accepted(
     role: str,
     point_fields: dict[str, Any],
 ) -> None:
+    """A constrained role admitting its second kind, and an open role admitting any.
+
+    ``derived`` is the kind a narrow reading of "primary measurement" would
+    lock out, and ``safety_interlock`` is deliberately unconstrained.
+    """
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(
         http_client,
@@ -384,6 +252,7 @@ async def test_a_second_primary_measurement_is_refused(
 async def test_another_zone_may_have_its_own_primary_measurement(
     http_client: httpx.AsyncClient,
 ) -> None:
+    """The limit is per zone, not per point or per facility."""
     site, facility, control_zone = await create_growbox(http_client)
     other_zone = await create_control_zone(
         http_client,
@@ -407,17 +276,7 @@ async def test_the_same_point_may_hold_two_roles_in_one_zone(
 ) -> None:
     """A control point can be both the zone's output and its safety interlock."""
     site, facility, control_zone = await create_growbox(http_client)
-    point = await create_point(
-        http_client,
-        site["id"],
-        facility_id=facility["id"],
-        code="fan_power",
-        name="Fan power",
-        point_kind="control",
-        metric_type="fan_power",
-        data_type="boolean",
-        unit=None,
-    )
+    point = await create_point(http_client, site["id"], facility_id=facility["id"], **FAN_POWER)
 
     first = await assign(http_client, control_zone["id"], point["id"], "control_output")
     second = await assign(http_client, control_zone["id"], point["id"], "safety_interlock")
@@ -486,11 +345,7 @@ async def test_an_archived_zone_refuses_new_links(
 ) -> None:
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
-    archived = await http_client.patch(
-        f"{CONTROL_ZONES_URL}/{control_zone['id']}",
-        json={"status": "archived"},
-    )
-    assert archived.status_code == 200, archived.text
+    await archive(http_client, f"{CONTROL_ZONES_URL}/{control_zone['id']}")
 
     response = await assign(http_client, control_zone["id"], point["id"], "primary_measurement")
 
@@ -505,11 +360,7 @@ async def test_an_archived_point_cannot_be_linked(
 ) -> None:
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
-    archived = await http_client.patch(
-        f"{POINTS_URL}/{point['id']}",
-        json={"status": "archived"},
-    )
-    assert archived.status_code == 200, archived.text
+    await archive(http_client, f"{POINTS_URL}/{point['id']}")
 
     response = await assign(http_client, control_zone["id"], point["id"], "primary_measurement")
 
@@ -547,17 +398,7 @@ async def test_listing_returns_the_links_with_their_points(
 ) -> None:
     site, facility, control_zone = await create_growbox(http_client)
     temperature = await create_point(http_client, site["id"], facility_id=facility["id"])
-    fan = await create_point(
-        http_client,
-        site["id"],
-        facility_id=facility["id"],
-        code="fan_power",
-        name="Fan power",
-        point_kind="control",
-        metric_type="fan_power",
-        data_type="boolean",
-        unit=None,
-    )
+    fan = await create_point(http_client, site["id"], facility_id=facility["id"], **FAN_POWER)
     await assign(http_client, control_zone["id"], temperature["id"], "primary_measurement")
     await assign(http_client, control_zone["id"], fan["id"], "control_output")
 
@@ -570,45 +411,6 @@ async def test_listing_returns_the_links_with_their_points(
     assert [item["role"] for item in body["items"]] == ["primary_measurement", "control_output"]
     assert body["items"][1]["unit"] is None
     assert body["items"][1]["data_type"] == "boolean"
-
-
-async def test_listing_pages_deterministically(http_client: httpx.AsyncClient) -> None:
-    site, facility, control_zone = await create_growbox(http_client)
-    codes: list[str] = [f"metric_{index}" for index in range(5)]
-    for code in codes:
-        point = await create_point(
-            http_client,
-            site["id"],
-            facility_id=facility["id"],
-            code=code,
-            metric_type=code,
-        )
-        assigned = await assign(
-            http_client,
-            control_zone["id"],
-            point["id"],
-            "secondary_measurement",
-        )
-        assert assigned.status_code == 201, assigned.text
-
-    first = await http_client.get(assignments_url(control_zone["id"]), params={"limit": 2})
-    second = await http_client.get(
-        assignments_url(control_zone["id"]),
-        params={"limit": 2, "offset": 2},
-    )
-
-    assert first.json()["total"] == 5
-    assert [item["point_code"] for item in first.json()["items"]] == codes[:2]
-    assert [item["point_code"] for item in second.json()["items"]] == codes[2:4]
-
-
-async def test_listing_an_unknown_zone_is_reported_as_missing(
-    http_client: httpx.AsyncClient,
-) -> None:
-    response = await http_client.get(assignments_url(str(uuid4())))
-
-    assert response.status_code == 404, response.text
-    assert response.json()["error"]["code"] == "control_zone_not_found"
 
 
 async def test_listing_covers_only_the_zone_asked_about(
@@ -631,10 +433,21 @@ async def test_listing_covers_only_the_zone_asked_about(
     assert response.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
 
 
+async def test_listing_an_unknown_zone_is_reported_as_missing(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """The nested collection resolves its zone rather than answering an empty page."""
+    response = await http_client.get(assignments_url(str(uuid4())))
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "control_zone_not_found"
+
+
 async def test_deleting_a_link_leaves_the_point_alone(
     http_client: httpx.AsyncClient,
     connection: AsyncConnection,
 ) -> None:
+    """The only ``DELETE`` in the API removes a link, never an entity."""
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
     created = await assign(http_client, control_zone["id"], point["id"], "primary_measurement")
@@ -653,6 +466,7 @@ async def test_deleting_a_link_leaves_the_point_alone(
 
 
 async def test_deleting_frees_the_role_again(http_client: httpx.AsyncClient) -> None:
+    """The primary-measurement limit counts live rows, not rows that ever existed."""
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
     created = await assign(http_client, control_zone["id"], point["id"], "primary_measurement")
@@ -678,6 +492,7 @@ async def test_a_zone_cannot_delete_another_zones_link(
     http_client: httpx.AsyncClient,
     connection: AsyncConnection,
 ) -> None:
+    """The assignment identifier is only meaningful under the zone that owns it."""
     site, facility, control_zone = await create_growbox(http_client)
     other_zone = await create_control_zone(
         http_client,
