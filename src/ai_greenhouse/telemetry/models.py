@@ -51,11 +51,8 @@ class TelemetrySample(Base):
         point_id: The point measured. ``ON DELETE RESTRICT``, so no point that
             has ever been measured can be removed out from under its history.
         simulation_run_id: The simulation run that produced the sample, when one
-            did. Real measurements leave it ``NULL``. It carries no foreign key
-            yet: ``simulation_runs`` arrives with the run entity in M2.3, and
-            that story's migration is what attaches the ``ON DELETE RESTRICT``
-            constraint. The column is declared here because the sample it
-            describes is written here.
+            did. Real measurements leave it ``NULL``. ``ON DELETE RESTRICT``
+            keeps a persisted run from disappearing underneath its samples.
         value: The measured value, as ``jsonb`` so one table serves numeric,
             boolean and textual points. Never ``NULL``: absence of data is the
             ``no_data`` state of a point, not a sample carrying nothing.
@@ -87,7 +84,11 @@ class TelemetrySample(Base):
         ForeignKey("points.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    simulation_run_id: Mapped[UUID | None] = mapped_column(Uuid(), nullable=True)
+    simulation_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey("simulation_runs.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     value: Mapped[Any] = mapped_column(JSONB(none_as_null=True), nullable=False)
     unit: Mapped[str | None] = mapped_column(String(MAX_UNIT_LENGTH), nullable=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

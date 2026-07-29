@@ -20,12 +20,14 @@ SITES_URL: str = "/api/v1/sites"
 FACILITIES_URL: str = "/api/v1/facilities"
 CONTROL_ZONES_URL: str = "/api/v1/control-zones"
 POINTS_URL: str = "/api/v1/points"
+SIMULATION_RUNS_URL: str = "/api/v1/simulation-runs"
 
 DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     SITES_URL,
     FACILITIES_URL,
     CONTROL_ZONES_URL,
     POINTS_URL,
+    SIMULATION_RUNS_URL,
 )
 """Every collection a client can reach. None of them accepts ``DELETE``."""
 
