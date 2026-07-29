@@ -41,9 +41,7 @@ def client(app: FastAPI) -> httpx.AsyncClient:
     [
         ("", DEFAULT_LIMIT, 0),
         (f"?limit={MAX_LIMIT}", MAX_LIMIT, 0),
-        (f"?limit={MAX_LIMIT + 1}", MAX_LIMIT, 0),
-        ("?limit=10000", MAX_LIMIT, 0),
-        ("?limit=0", MIN_LIMIT, 0),
+        (f"?limit={MIN_LIMIT}", MIN_LIMIT, 0),
         ("?limit=25&offset=10", 25, 10),
     ],
 )
@@ -65,11 +63,28 @@ async def test_window_is_applied_to_the_response_envelope(
     }
 
 
-@pytest.mark.parametrize("query", ["?offset=-1", "?limit=abc", "?offset=abc"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "?offset=-1",
+        "?limit=abc",
+        "?offset=abc",
+        "?limit=0",
+        f"?limit={MAX_LIMIT + 1}",
+        "?limit=10000",
+        "?limit=-5",
+    ],
+)
 async def test_unusable_window_is_rejected_with_the_error_envelope(
     app: FastAPI,
     query: str,
 ) -> None:
+    """An out-of-range ``limit`` fails loudly instead of being clamped.
+
+    A client paging with ``limit=500`` and stepping ``offset`` by 500 against a
+    silently clamped window would have read two fifths of the collection and
+    been told nothing.
+    """
     async with client(app) as http_client:
         response = await http_client.get(f"/probe/items{query}")
 

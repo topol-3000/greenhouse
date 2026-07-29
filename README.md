@@ -154,6 +154,12 @@ Collection endpoints use the same envelope and accept `limit` and `offset`:
 {"items": [], "total": 0, "limit": 50, "offset": 0}
 ```
 
+`limit` defaults to 50 and must be between 1 and 200; `offset` must not be
+negative. A window outside those bounds is refused with HTTP 422
+`validation_error` rather than quietly clamped — a client paging with
+`limit=500` and stepping `offset` by 500 would otherwise have skipped three
+fifths of the collection without being told.
+
 Every domain failure uses one error envelope:
 
 ```json
@@ -170,9 +176,22 @@ The status codes have consistent meanings:
 
 | HTTP | Meaning |
 | --- | --- |
-| 404 | The resource named by the request path does not exist. |
-| 409 | Existing state conflicts with the operation, such as a duplicate code, archived parent, immutable field, or invalid assignment. |
-| 422 | The request shape or value is invalid, or a referenced parent from the request body cannot be used. |
+| 404 | An entity named by the request does not exist. Where its identifier was written — path, query or body — makes no difference. |
+| 409 | Existing state or a relationship between entities conflicts with the operation: a duplicate code, an archived parent, an immutable field, a facility on the wrong site, an invalid assignment. |
+| 422 | The request shape or a field value is invalid: an unknown enum member, a malformed slug, a pagination window out of bounds, a unit that the point's data type cannot carry. |
+
+Every refusal to change a field fixed at creation uses the one code
+`immutable_field` and names the fields in `details.fields`:
+
+```json
+{
+  "error": {
+    "code": "immutable_field",
+    "message": "A facility's code and site cannot be changed after creation",
+    "details": {"fields": ["site_id"], "facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88"}
+  }
+}
+```
 
 ## Sites API
 
@@ -217,7 +236,7 @@ Rules worth knowing before calling it:
   and stays readable by id.
 
 Collections come back in a paginated envelope ordered by `created_at ASC,
-id ASC`, with `limit` defaulting to 50 and capped at 200:
+id ASC`, with `limit` defaulting to 50 and accepted between 1 and 200:
 
 ```json
 {"items": [], "total": 0, "limit": 50, "offset": 0}
@@ -295,12 +314,11 @@ Rules worth knowing before calling it:
 | Situation | HTTP | `error.code` |
 | --- | --- | --- |
 | Invalid request body or unknown `facility_type` | 422 | `validation_error` |
-| `site_id` references no site | 422 | `site_not_found` |
+| `site_id` references no site | 404 | `site_not_found` |
 | Facility does not exist | 404 | `facility_not_found` |
 | `code` already taken on that site | 409 | `facility_code_conflict` |
 | Site is archived | 409 | `parent_archived` |
-| `PATCH` names `code` | 409 | `immutable_field` |
-| `PATCH` names `site_id` | 409 | `facility_site_immutable` |
+| `PATCH` names `code` or `site_id` | 409 | `immutable_field` |
 
 ### Facility configuration
 
@@ -434,12 +452,11 @@ Rules worth knowing before calling it:
 | Situation | HTTP | `error.code` |
 | --- | --- | --- |
 | Invalid request body or unknown `zone_type` | 422 | `validation_error` |
-| `facility_id` references no facility | 422 | `facility_not_found` |
+| `facility_id` references no facility | 404 | `facility_not_found` |
 | Control zone does not exist | 404 | `control_zone_not_found` |
 | `code` already taken in that facility | 409 | `control_zone_code_conflict` |
 | Facility is archived | 409 | `parent_archived` |
-| `PATCH` names `code` | 409 | `immutable_field` |
-| `PATCH` names `facility_id` | 409 | `zone_facility_immutable` |
+| `PATCH` names `code` or `facility_id` | 409 | `immutable_field` |
 
 ### Zone point assignments
 
@@ -496,7 +513,7 @@ Rules worth knowing before calling it:
 | Situation | HTTP | `error.code` |
 | --- | --- | --- |
 | Invalid request body or unknown `role` | 422 | `validation_error` |
-| `point_id` references no point | 422 | `point_not_found` |
+| `point_id` references no point | 404 | `point_not_found` |
 | Control zone does not exist | 404 | `control_zone_not_found` |
 | Assignment does not exist in that zone | 404 | `assignment_not_found` |
 | Zone or point is archived | 409 | `parent_archived` |
@@ -560,9 +577,9 @@ Rules worth knowing before calling it:
   `derived` point is accepted, but nothing computes one until a later
   milestone;
 - `data_type` is one of `float`, `integer`, `boolean` and `string`;
-- `unit` is **required** for `float` and `integer` points and **refused** for
-  `boolean` ones. A bare `22` that might be Celsius or Fahrenheit would make
-  every later target and alert threshold ambiguous;
+- `unit` is optional and **refused** for `boolean` points. A numeric point may
+  leave it `null`: pH, an EC ratio and a light-utilisation index are
+  dimensionless, and demanding a unit would only push a fake one into the data;
 - `min_value` and `max_value` are only accepted for `float` and `integer`
   points, and the lower end may not exceed the upper one;
 - `site_id` is required and `facility_id` is not. A point may belong to the
@@ -578,8 +595,8 @@ Rules worth knowing before calling it:
   already recorded against the point without touching any of them;
 - `unit`, `min_value` and `max_value` are nullable, so in a `PATCH` an explicit
   `null` clears them while omitting the field leaves the stored value alone.
-  The result is still validated against the point's `data_type`, so clearing
-  the unit of a float point is refused;
+  The result is still validated against the point's `data_type`, so a range
+  left on a point cannot outlive the type that carries it;
 - there is no `DELETE`, and a site or facility that still has points cannot be
   deleted at the database level either (`ON DELETE RESTRICT`).
 
@@ -611,15 +628,14 @@ concurrent-update semantics without a migration, and stays at `0` until then.
 | --- | --- | --- |
 | Invalid request body or unknown `point_kind` | 422 | `validation_error` |
 | Inverted range in a creation body | 422 | `validation_error` |
-| `site_id` references no site | 422 | `site_not_found` |
-| `facility_id` references no facility | 422 | `facility_not_found` |
-| `facility_id` belongs to another site | 422 | `facility_not_in_site` |
-| Unit missing on a `float` or `integer` point | 422 | `unit_required` |
 | Unit given for a `boolean` point | 422 | `unit_not_allowed` |
 | Range given for a non-numeric point | 422 | `range_not_allowed` |
 | `PATCH` would invert the stored range | 422 | `invalid_value_range` |
 | Point does not exist | 404 | `point_not_found` |
+| `site_id` references no site | 404 | `site_not_found` |
+| `facility_id` references no facility | 404 | `facility_not_found` |
 | `code` already taken on that site | 409 | `point_code_conflict` |
+| `facility_id` belongs to another site | 409 | `facility_not_in_site` |
 | Site or facility is archived | 409 | `parent_archived` |
 | `PATCH` names a field that defines the point | 409 | `immutable_field` |
 

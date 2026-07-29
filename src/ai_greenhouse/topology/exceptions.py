@@ -10,7 +10,7 @@ from ai_greenhouse.core.exceptions import (
     ConflictError,
     NotFoundError,
     ParentArchivedError,
-    ReferenceError,
+    ReferencedEntityNotFoundError,
 )
 
 __all__ = [
@@ -20,14 +20,12 @@ __all__ = [
     "AssignmentZoneArchivedError",
     "ControlZoneCodeConflictError",
     "ControlZoneFacilityArchivedError",
-    "ControlZoneFacilityImmutableError",
     "ControlZoneNotFoundError",
     "CrossFacilityAssignmentError",
     "CrossSiteAssignmentError",
     "FacilityCodeConflictError",
     "FacilityNotFoundError",
     "FacilitySiteArchivedError",
-    "FacilitySiteImmutableError",
     "ParentFacilityNotFoundError",
     "ParentSiteNotFoundError",
     "PrimaryMeasurementExistsError",
@@ -65,12 +63,12 @@ class SiteCodeConflictError(ConflictError):
         super().__init__("Site code already exists", details={"code": site_code})
 
 
-class ParentSiteNotFoundError(ReferenceError):
+class ParentSiteNotFoundError(ReferencedEntityNotFoundError):
     """A request body references a site that does not exist.
 
-    Distinct from :class:`SiteNotFoundError`: the identifier came from the body
-    rather than from the path, so the request is unprocessable (HTTP 422) rather
-    than addressed at a missing resource (HTTP 404).
+    Distinct from :class:`SiteNotFoundError` only in where the identifier came
+    from. Both answer HTTP 404 with the same ``site_not_found`` code, because
+    both describe the same missing entity.
     """
 
     code = "site_not_found"
@@ -135,36 +133,12 @@ class FacilityCodeConflictError(ConflictError):
         )
 
 
-class FacilitySiteImmutableError(ConflictError):
-    """A ``PATCH`` tried to move a facility to another site.
-
-    Kept separate from ``immutable_field`` because the refusal is not about a
-    field being frozen but about the operation being administrative: moving a
-    facility has to migrate its zones and points too.
-    """
-
-    code = "facility_site_immutable"
-
-    def __init__(self, facility_id: UUID) -> None:
-        """Report the refused move.
-
-        Args:
-            facility_id: The facility the request tried to move.
-        """
-        super().__init__(
-            "A facility cannot be moved between sites; "
-            "moving one is a separate administrative operation",
-            details={"facility_id": str(facility_id)},
-        )
-
-
-class ParentFacilityNotFoundError(ReferenceError):
+class ParentFacilityNotFoundError(ReferencedEntityNotFoundError):
     """A request body references a facility that does not exist.
 
-    Distinct from :class:`FacilityNotFoundError`: the identifier came from the
-    body rather than from the path, so the request is unprocessable (HTTP 422)
-    rather than addressed at a missing resource (HTTP 404). Both report the same
-    ``facility_not_found`` code, because the missing entity is the same one.
+    Distinct from :class:`FacilityNotFoundError` only in where the identifier
+    came from. Both answer HTTP 404 with the same ``facility_not_found`` code,
+    because both describe the same missing entity.
     """
 
     code = "facility_not_found"
@@ -229,30 +203,6 @@ class ControlZoneCodeConflictError(ConflictError):
         super().__init__(
             "Control zone code already exists within the facility",
             details={"facility_id": str(facility_id), "code": zone_code},
-        )
-
-
-class ControlZoneFacilityImmutableError(ConflictError):
-    """A ``PATCH`` tried to move a control zone to another facility.
-
-    Kept separate from ``immutable_field`` because the refusal is not about a
-    field being frozen but about the invariant it protects: a zone belongs to
-    exactly one facility, and the points assigned to it are scoped by that
-    facility too. Re-parenting a zone would silently break those assignments.
-    """
-
-    code = "zone_facility_immutable"
-
-    def __init__(self, control_zone_id: UUID) -> None:
-        """Report the refused move.
-
-        Args:
-            control_zone_id: The zone the request tried to move.
-        """
-        super().__init__(
-            "A control zone cannot be moved between facilities; "
-            "a zone belongs to exactly one facility for its whole life",
-            details={"control_zone_id": str(control_zone_id)},
         )
 
 

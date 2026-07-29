@@ -530,15 +530,15 @@ async def test_an_unknown_zone_is_reported_as_missing(http_client: httpx.AsyncCl
     assert response.json()["error"]["code"] == "control_zone_not_found"
 
 
-async def test_an_unknown_point_makes_the_body_unprocessable(
+async def test_an_unknown_point_is_reported_as_not_found(
     http_client: httpx.AsyncClient,
 ) -> None:
-    """The identifier came from the body, so this is 422 and not 404."""
+    """A missing point is 404 whether its identifier came from body or path."""
     _site, _facility, control_zone = await create_growbox(http_client)
 
     response = await assign(http_client, control_zone["id"], str(uuid4()), "primary_measurement")
 
-    assert response.status_code == 422, response.text
+    assert response.status_code == 404, response.text
     assert response.json()["error"]["code"] == "point_not_found"
 
 

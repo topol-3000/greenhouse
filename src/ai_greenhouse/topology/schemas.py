@@ -93,8 +93,9 @@ class FacilityUpdate(BaseModel):
     an explicit ``null`` both leave the stored value untouched.
 
     ``code`` and ``site_id`` are declared even though neither can be changed.
-    Accepting them here is what lets the service answer with a precise HTTP 409
-    instead of the generic HTTP 422 that an unexpected field would produce.
+    Accepting them here is what lets the service answer with HTTP 409
+    ``immutable_field``, naming the refused field, instead of the generic HTTP
+    422 that an unexpected field would produce.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -143,9 +144,9 @@ class ControlZoneUpdate(BaseModel):
     an explicit ``null`` both leave the stored value untouched.
 
     ``code`` and ``facility_id`` are declared even though neither can be
-    changed. Accepting them here is what lets the service answer with a precise
-    HTTP 409 instead of the generic HTTP 422 that an unexpected field would
-    produce.
+    changed. Accepting them here is what lets the service answer with HTTP 409
+    ``immutable_field``, naming the refused field, instead of the generic HTTP
+    422 that an unexpected field would produce.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -22,7 +22,7 @@ from ai_greenhouse.core.exceptions import (
     DomainError,
     ImmutableFieldError,
     NotFoundError,
-    ReferenceError,
+    ReferencedEntityNotFoundError,
 )
 from ai_greenhouse.core.logging import configure_logging
 from ai_greenhouse.core.types import CodeStr
@@ -41,12 +41,12 @@ DOMAIN_ERRORS: dict[str, DomainError] = {
         code="facility_code_conflict",
         details={"site_id": SITE_ID, "code": "basil-growbox"},
     ),
-    "reference": ReferenceError(
+    "reference": ReferencedEntityNotFoundError(
         "Referenced site does not exist",
         code="site_not_found",
         details={"site_id": SITE_ID},
     ),
-    "immutable": ImmutableFieldError("Point code cannot be changed", details={"field": "code"}),
+    "immutable": ImmutableFieldError("Point code cannot be changed", details={"fields": ["code"]}),
     "bare": DomainError("Something the domain refuses"),
 }
 
@@ -91,7 +91,7 @@ def client(app: FastAPI, *, raise_app_exceptions: bool = True) -> httpx.AsyncCli
     [
         ("not_found", 404, "site_not_found"),
         ("conflict", 409, "facility_code_conflict"),
-        ("reference", 422, "site_not_found"),
+        ("reference", 404, "site_not_found"),
         ("immutable", 409, "immutable_field"),
         ("bare", 500, "domain_error"),
     ],
@@ -150,9 +150,27 @@ def test_domain_exceptions_do_not_depend_on_fastapi() -> None:
     top_level = {name.split(".", maxsplit=1)[0] for name in imported}
     assert not top_level & {"fastapi", "starlette"}
 
-    for error_class in (NotFoundError, ConflictError, ReferenceError, ImmutableFieldError):
+    for error_class in (
+        NotFoundError,
+        ConflictError,
+        ReferencedEntityNotFoundError,
+        ImmutableFieldError,
+    ):
         assert issubclass(error_class, DomainError)
         assert issubclass(error_class, Exception)
+
+
+def test_no_domain_exception_shadows_a_builtin() -> None:
+    """A name reused from ``builtins`` makes ``except`` clauses lie."""
+    import builtins
+
+    import ai_greenhouse.core.exceptions as core_exceptions
+    import ai_greenhouse.points.exceptions as point_exceptions
+    import ai_greenhouse.topology.exceptions as topology_exceptions
+
+    for module in (core_exceptions, point_exceptions, topology_exceptions):
+        shadowed = [name for name in module.__all__ if hasattr(builtins, name)]
+        assert not shadowed, f"{module.__name__} shadows builtins: {shadowed}"
 
 
 async def test_validation_failure_uses_the_same_envelope(app: FastAPI) -> None:

@@ -17,34 +17,35 @@ MAX_LIMIT: int = 200
 class PageParams:
     """Requested collection window.
 
-    ``limit`` is clamped into ``[MIN_LIMIT, MAX_LIMIT]`` so an oversized page
-    request degrades to the maximum page instead of failing. ``offset`` is
-    rejected when negative, because there is no sensible value to fall back to.
+    Both bounds are declared on the query parameters themselves, so a window
+    outside ``[MIN_LIMIT, MAX_LIMIT]`` is refused with HTTP 422 before this
+    class is built. Silently clamping an oversized ``limit`` was worse: a client
+    paging with ``limit=500`` and stepping ``offset`` by 500 would have skipped
+    three fifths of the collection without ever being told.
     """
 
     def __init__(
         self,
         limit: Annotated[
             int,
-            Query(description=f"Maximum number of items to return, clamped to {MAX_LIMIT}."),
+            Query(
+                ge=MIN_LIMIT,
+                le=MAX_LIMIT,
+                description=f"Number of items to return, between {MIN_LIMIT} and {MAX_LIMIT}.",
+            ),
         ] = DEFAULT_LIMIT,
         offset: Annotated[
             int,
             Query(ge=0, description="Number of items to skip."),
         ] = 0,
     ) -> None:
-        """Clamp ``limit`` and validate ``offset``.
+        """Hold the validated window.
 
         Args:
-            limit: Requested page size, clamped into ``[MIN_LIMIT, MAX_LIMIT]``.
-            offset: Requested number of items to skip; must not be negative.
-
-        Raises:
-            ValueError: If ``offset`` is negative.
+            limit: Requested page size, within ``[MIN_LIMIT, MAX_LIMIT]``.
+            offset: Requested number of items to skip; not negative.
         """
-        if offset < 0:
-            raise ValueError("offset must not be negative")
-        self.limit: int = min(max(limit, MIN_LIMIT), MAX_LIMIT)
+        self.limit: int = limit
         self.offset: int = offset
 
     def __repr__(self) -> str:

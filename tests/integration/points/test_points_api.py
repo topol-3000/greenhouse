@@ -463,20 +463,21 @@ async def test_a_physical_address_is_refused_in_the_request(
 # --- Parent resolution ----------------------------------------------------
 
 
-async def test_unknown_site_is_reported_as_an_unprocessable_reference(
+async def test_unknown_site_in_the_body_is_reported_as_not_found(
     http_client: httpx.AsyncClient,
 ) -> None:
+    """A missing entity is 404 wherever its identifier was written."""
     missing_site_id = uuid4()
 
     response = await http_client.post(POINTS_URL, json=point_body(str(missing_site_id)))
 
     body = response.json()
-    assert response.status_code == 422
+    assert response.status_code == 404
     assert body["error"]["code"] == "site_not_found"
     assert body["error"]["details"] == {"site_id": str(missing_site_id)}
 
 
-async def test_unknown_facility_is_reported_as_an_unprocessable_reference(
+async def test_unknown_facility_in_the_body_is_reported_as_not_found(
     http_client: httpx.AsyncClient,
 ) -> None:
     site = await create_site(http_client)
@@ -488,7 +489,7 @@ async def test_unknown_facility_is_reported_as_an_unprocessable_reference(
     )
 
     body = response.json()
-    assert response.status_code == 422
+    assert response.status_code == 404
     assert body["error"]["code"] == "facility_not_found"
     assert body["error"]["details"] == {"facility_id": str(missing_facility_id)}
 
@@ -504,7 +505,7 @@ async def test_a_facility_of_another_site_is_refused(http_client: httpx.AsyncCli
     )
 
     body = response.json()
-    assert response.status_code == 422
+    assert response.status_code == 409
     assert body["error"]["code"] == "facility_not_in_site"
     assert body["error"]["details"] == {
         "site_id": home["id"],
@@ -640,21 +641,32 @@ async def test_archiving_frees_no_code(http_client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.parametrize("data_type", ["float", "integer"])
-async def test_a_numeric_point_without_a_unit_is_refused(
+async def test_a_dimensionless_numeric_point_is_accepted(
     http_client: httpx.AsyncClient,
     data_type: str,
 ) -> None:
+    """pH and other dimensionless quantities have no unit to give."""
     site = await create_site(http_client)
 
     response = await http_client.post(
         POINTS_URL,
-        json=point_body(site["id"], data_type=data_type, unit=None),
+        json=point_body(
+            site["id"],
+            code="nutrient_ph",
+            metric_type="nutrient_ph",
+            data_type=data_type,
+            unit=None,
+            min_value=0,
+            max_value=14,
+        ),
     )
 
     body = response.json()
-    assert response.status_code == 422
-    assert body["error"]["code"] == "unit_required"
-    assert body["error"]["details"] == {"data_type": data_type}
+    assert response.status_code == 201, response.text
+    assert body["unit"] is None
+    assert body["data_type"] == data_type
+    assert body["min_value"] == 0
+    assert body["max_value"] == 14
 
 
 async def test_a_boolean_point_with_a_unit_is_refused(http_client: httpx.AsyncClient) -> None:
@@ -1042,17 +1054,19 @@ async def test_an_update_that_would_invert_the_range_is_refused(
     assert body["error"]["code"] == "invalid_value_range"
 
 
-async def test_clearing_the_unit_of_a_numeric_point_is_refused(
+async def test_clearing_the_unit_of_a_numeric_point_is_accepted(
     http_client: httpx.AsyncClient,
 ) -> None:
+    """A numeric point may become dimensionless; nothing else about it changes."""
     site = await create_site(http_client)
     created = await create_point(http_client, site["id"])
 
     response = await http_client.patch(f"{POINTS_URL}/{created['id']}", json={"unit": None})
 
     body = response.json()
-    assert response.status_code == 422
-    assert body["error"]["code"] == "unit_required"
+    assert response.status_code == 200, response.text
+    assert body["unit"] is None
+    assert body["data_type"] == created["data_type"]
 
 
 async def test_giving_a_boolean_point_a_unit_is_refused(http_client: httpx.AsyncClient) -> None:
