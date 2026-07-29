@@ -1,10 +1,12 @@
 """The lifecycle rule every domain resource obeys, asserted in one place.
 
-Entities are retired with ``PATCH {"status": "archived"}`` and never removed.
+Entities are retired through their lifecycle and never removed.
 The rule was written out once per entity module before, which meant four copies
 of the same request and no test at all for a resource someone forgot. Driving
 every entity from one list makes the omission the failing case.
 """
+
+from uuid import uuid4
 
 import httpx
 
@@ -12,6 +14,7 @@ from tests.integration.factories import (
     CONTROL_ZONES_URL,
     FACILITIES_URL,
     POINTS_URL,
+    SIMULATION_RUNS_URL,
     SITES_URL,
     create_growbox,
     create_point,
@@ -27,6 +30,7 @@ async def test_no_domain_entity_can_be_deleted(http_client: httpx.AsyncClient) -
         "facility": f"{FACILITIES_URL}/{facility['id']}",
         "control zone": f"{CONTROL_ZONES_URL}/{control_zone['id']}",
         "point": f"{POINTS_URL}/{point['id']}",
+        "simulation run": f"{SIMULATION_RUNS_URL}/{uuid4()}",
     }
 
     for entity, url in entity_urls.items():

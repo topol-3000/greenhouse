@@ -51,6 +51,8 @@ def test_domain_routes_are_mounted_under_the_versioned_prefix(settings: Settings
 
     assert set(paths[f"{API_V1_PREFIX}/sites"]) == {"get", "post"}
     assert set(paths[f"{API_V1_PREFIX}/sites/{{site_id}}"]) == {"get", "patch"}
+    assert set(paths[f"{API_V1_PREFIX}/simulation-runs"]) == {"get", "post"}
+    assert set(paths[f"{API_V1_PREFIX}/simulation-runs/{{run_id}}"]) == {"get"}
 
 
 def test_no_domain_route_escapes_the_versioned_prefix(settings: Settings) -> None:
