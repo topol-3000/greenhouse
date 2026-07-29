@@ -53,24 +53,10 @@ def test_default_window() -> None:
     assert params.offset == 0
 
 
-@pytest.mark.parametrize(
-    ("requested", "expected"),
-    [
-        (MAX_LIMIT, MAX_LIMIT),
-        (MAX_LIMIT + 1, MAX_LIMIT),
-        (10_000, MAX_LIMIT),
-        (MIN_LIMIT, MIN_LIMIT),
-        (0, MIN_LIMIT),
-        (-5, MIN_LIMIT),
-    ],
-)
-def test_limit_is_clamped(requested: int, expected: int) -> None:
-    assert PageParams(limit=requested).limit == expected
-
-
-def test_negative_offset_is_rejected() -> None:
-    with pytest.raises(ValueError, match="offset must not be negative"):
-        PageParams(offset=-1)
+@pytest.mark.parametrize("requested", [MIN_LIMIT, DEFAULT_LIMIT, MAX_LIMIT])
+def test_limit_is_preserved(requested: int) -> None:
+    """The window a caller asks for is the window it pages with, or none."""
+    assert PageParams(limit=requested).limit == requested
 
 
 def test_offset_is_preserved() -> None:

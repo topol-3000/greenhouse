@@ -127,7 +127,7 @@ def test_update_accepts_facility_id_so_the_service_can_refuse_it() -> None:
     payload = ControlZoneUpdate.model_validate({"facility_id": str(uuid4())})
 
     assert "facility_id" in payload.model_fields_set, (
-        "facility_id must reach the service, which answers 409 zone_facility_immutable"
+        "facility_id must reach the service, which answers 409 immutable_field"
     )
 
 

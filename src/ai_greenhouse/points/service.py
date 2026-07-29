@@ -33,7 +33,6 @@ from ai_greenhouse.points.exceptions import (
     PointSiteArchivedError,
     PointStateNotFoundError,
     UnitNotAllowedError,
-    UnitRequiredError,
     ValueRangeNotAllowedError,
 )
 from ai_greenhouse.points.models import (
@@ -66,13 +65,13 @@ therefore refuses to move between parents under the same generic code as the
 rest: the refusal has one reason, so it has one code.
 """
 
-UNIT_REQUIRED_DATA_TYPES: frozenset[PointDataType] = frozenset(
-    {PointDataType.FLOAT, PointDataType.INTEGER}
-)
-"""Data types whose values are meaningless without a unit."""
-
 UNIT_FORBIDDEN_DATA_TYPES: frozenset[PointDataType] = frozenset({PointDataType.BOOLEAN})
-"""Data types a unit cannot describe. A ``string`` point may carry one."""
+"""Data types a unit cannot describe. A ``string`` point may carry one.
+
+Numeric points are not required to carry one. Plenty of real quantities are
+dimensionless — pH, EC ratio, a light-utilisation index — and refusing them a
+point would force a fake unit into the data, which is worse than an absent one.
+"""
 
 RANGE_ALLOWED_DATA_TYPES: frozenset[PointDataType] = frozenset(
     {PointDataType.FLOAT, PointDataType.INTEGER}
@@ -123,8 +122,7 @@ class PointService:
             ParentFacilityNotFoundError: If the referenced facility is missing.
             FacilityNotInSiteError: If that facility belongs to another site.
             PointFacilityArchivedError: If that facility is archived.
-            UnitRequiredError: If a numeric point carries no unit.
-            UnitNotAllowedError: If a boolean point carries one.
+            UnitNotAllowedError: If a boolean point carries a unit.
             ValueRangeNotAllowedError: If a non-numeric point is bounded.
             PointCodeConflictError: If the code is taken on that site.
         """
@@ -271,8 +269,8 @@ class PointService:
         by ``model_fields_set`` and not by the value being ``None``.
 
         The resulting combination of unit and range is validated against the
-        point's stored ``data_type``, not against the request alone: clearing
-        the unit of a float point is as invalid as never supplying one.
+        point's stored ``data_type``, not against the request alone: a range
+        left in place is judged against the type that has to carry it.
 
         Args:
             point_id: Identifier of the point to update.
@@ -284,9 +282,8 @@ class PointService:
         Raises:
             PointNotFoundError: If no point has that identifier.
             ImmutableFieldError: If the body names a field fixed at creation.
-            UnitRequiredError: If the result would leave a numeric point
-                without a unit.
-            UnitNotAllowedError: If the result would give a boolean point one.
+            UnitNotAllowedError: If the result would give a boolean point a
+                unit.
             ValueRangeNotAllowedError: If the result would bound a non-numeric
                 point.
             InvalidValueRangeError: If the resulting lower end is above the
@@ -342,19 +339,18 @@ class PointService:
     ) -> None:
         """Check a unit and range against the data type they describe.
 
+        A numeric point without a unit is accepted: it is dimensionless.
+
         Args:
-            data_type: The point's data type, which decides all three rules.
+            data_type: The point's data type, which decides both rules.
             unit: The resulting unit, or ``None``.
             min_value: The resulting lower bound, or ``None``.
             max_value: The resulting upper bound, or ``None``.
 
         Raises:
-            UnitRequiredError: If a numeric point has no unit.
-            UnitNotAllowedError: If a boolean point has one.
+            UnitNotAllowedError: If a boolean point has a unit.
             ValueRangeNotAllowedError: If a non-numeric point is bounded.
         """
-        if unit is None and data_type in UNIT_REQUIRED_DATA_TYPES:
-            raise UnitRequiredError(data_type.value)
         if unit is not None and data_type in UNIT_FORBIDDEN_DATA_TYPES:
             raise UnitNotAllowedError(data_type.value)
         bounded: bool = min_value is not None or max_value is not None

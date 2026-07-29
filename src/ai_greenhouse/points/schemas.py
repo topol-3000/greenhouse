@@ -33,7 +33,7 @@ class PointCreate(BaseModel):
     """Body accepted by ``POST /api/v1/points``.
 
     The relationship between ``data_type``, ``unit`` and the range is not
-    checked here. Those rules produce their own error codes — ``unit_required``,
+    checked here. Those rules produce their own error codes —
     ``unit_not_allowed``, ``range_not_allowed`` — which a schema validator
     cannot express, so the service applies them. The one rule kept at this level
     is the ordering of the range, because both ends are always visible in a

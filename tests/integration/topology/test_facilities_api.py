@@ -131,9 +131,10 @@ async def test_unknown_facility_type_is_refused(http_client: httpx.AsyncClient) 
     assert response.json()["error"]["code"] == "validation_error"
 
 
-async def test_unknown_site_is_reported_as_an_unprocessable_reference(
+async def test_unknown_site_in_the_body_is_reported_as_not_found(
     http_client: httpx.AsyncClient,
 ) -> None:
+    """A missing entity is 404 wherever its identifier was written."""
     missing_site_id = uuid4()
 
     response = await http_client.post(
@@ -147,7 +148,7 @@ async def test_unknown_site_is_reported_as_an_unprocessable_reference(
     )
 
     body = response.json()
-    assert response.status_code == 422
+    assert response.status_code == 404
     assert body["error"]["code"] == "site_not_found"
     assert body["error"]["details"] == {"site_id": str(missing_site_id)}
 
@@ -555,9 +556,9 @@ async def test_changing_the_site_is_refused(http_client: httpx.AsyncClient) -> N
 
     body = response.json()
     assert response.status_code == 409
-    assert body["error"]["code"] == "facility_site_immutable"
-    assert body["error"]["details"] == {"facility_id": created["id"]}
-    assert "administrative" in body["error"]["message"]
+    assert body["error"]["code"] == "immutable_field"
+    assert body["error"]["details"]["fields"] == ["site_id"]
+    assert body["error"]["details"]["facility_id"] == created["id"]
 
 
 async def test_resubmitting_the_current_site_is_refused_too(
@@ -572,7 +573,7 @@ async def test_resubmitting_the_current_site_is_refused_too(
     )
 
     assert response.status_code == 409, "site_id is never accepted, even unchanged"
-    assert response.json()["error"]["code"] == "facility_site_immutable"
+    assert response.json()["error"]["code"] == "immutable_field"
 
 
 async def test_refused_code_change_leaves_the_facility_untouched(

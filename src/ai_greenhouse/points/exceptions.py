@@ -16,7 +16,7 @@ from ai_greenhouse.core.exceptions import (
     DomainError,
     NotFoundError,
     ParentArchivedError,
-    ReferenceError,
+    ReferencedEntityNotFoundError,
 )
 
 __all__ = [
@@ -29,7 +29,6 @@ __all__ = [
     "PointStateNotFoundError",
     "ReferencedPointNotFoundError",
     "UnitNotAllowedError",
-    "UnitRequiredError",
     "ValueRangeNotAllowedError",
 ]
 
@@ -48,13 +47,12 @@ class PointNotFoundError(NotFoundError):
         super().__init__("Point not found", details={"point_id": str(point_id)})
 
 
-class ReferencedPointNotFoundError(ReferenceError):
+class ReferencedPointNotFoundError(ReferencedEntityNotFoundError):
     """A request body references a point that does not exist.
 
-    Distinct from :class:`PointNotFoundError`: the identifier came from the body
-    rather than from the path, so the request is unprocessable (HTTP 422) rather
-    than addressed at a missing resource (HTTP 404). Both report the same
-    ``point_not_found`` code, because the missing entity is the same one.
+    Distinct from :class:`PointNotFoundError` only in where the identifier came
+    from. Both answer HTTP 404 with the same ``point_not_found`` code, because
+    both describe the same missing entity.
 
     Declared here rather than in the module that raises it, following the rule
     the topology module already sets for a referenced site or facility: the
@@ -147,16 +145,15 @@ class PointFacilityArchivedError(ParentArchivedError):
         )
 
 
-class FacilityNotInSiteError(DomainError):
+class FacilityNotInSiteError(ConflictError):
     """The requested facility exists but belongs to a different site.
 
-    Reported as 422 rather than 404: both identifiers came from the request
-    body, and each resolves on its own. It is their combination that is
-    unprocessable.
+    Reported as 409 rather than 404 or 422: both identifiers resolve, and both
+    are well-formed. What the request contradicts is the relationship between
+    the two entities, which is what 409 is reserved for.
     """
 
     code = "facility_not_in_site"
-    http_status = 422
 
     def __init__(self, site_id: UUID, facility_id: UUID) -> None:
         """Report the mismatched pair.
@@ -168,29 +165,6 @@ class FacilityNotInSiteError(DomainError):
         super().__init__(
             "Facility does not belong to the requested site",
             details={"site_id": str(site_id), "facility_id": str(facility_id)},
-        )
-
-
-class UnitRequiredError(DomainError):
-    """A numeric point was submitted without a unit.
-
-    A bare number is not a measurement. Allowing ``22`` without knowing whether
-    it is Celsius or Fahrenheit would make every later comparison, target and
-    alert threshold ambiguous.
-    """
-
-    code = "unit_required"
-    http_status = 422
-
-    def __init__(self, data_type: str) -> None:
-        """Report the missing unit.
-
-        Args:
-            data_type: The data type that requires one.
-        """
-        super().__init__(
-            "A unit is required for this data type",
-            details={"data_type": data_type},
         )
 
 

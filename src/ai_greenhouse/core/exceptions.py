@@ -17,7 +17,7 @@ __all__ = [
     "ImmutableFieldError",
     "NotFoundError",
     "ParentArchivedError",
-    "ReferenceError",
+    "ReferencedEntityNotFoundError",
 ]
 
 
@@ -69,23 +69,29 @@ class ConflictError(DomainError):
     http_status = 409
 
 
-class ReferenceError(DomainError):
-    """A referenced parent entity does not exist.
+class ReferencedEntityNotFoundError(NotFoundError):
+    """An entity named by the request body or query does not exist.
 
-    This deliberately shadows the builtin ``ReferenceError`` inside this module,
-    as named by the story. Import it explicitly rather than relying on the
-    builtin name being free.
+    Reported as 404, exactly like an entity missing from the path: where the
+    identifier was written is a detail of the request, and a client that sent a
+    stale identifier needs the same answer either way. Kept as its own class so
+    the two origins stay distinguishable in the code that raises them.
 
-    Reported as 422 rather than 404: the missing entity is part of the request
-    body, so the request itself is unprocessable.
+    The name avoids the builtin ``ReferenceError``. Nothing in this project may
+    shadow a builtin exception: a bare ``except ReferenceError`` elsewhere would
+    then catch a case it never meant to.
     """
 
     code = "reference_not_found"
-    http_status = 422
 
 
 class ImmutableFieldError(ConflictError):
-    """A field that is fixed at creation time was modified."""
+    """A field that is fixed at creation time was modified.
+
+    Every such refusal in the API reports this one code and names the fields in
+    ``details["fields"]``. A caller that wants to know which field was refused
+    reads the details; it never has to know a per-entity code.
+    """
 
     code = "immutable_field"
 

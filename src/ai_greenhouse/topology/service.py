@@ -33,14 +33,12 @@ from ai_greenhouse.topology.exceptions import (
     AssignmentZoneArchivedError,
     ControlZoneCodeConflictError,
     ControlZoneFacilityArchivedError,
-    ControlZoneFacilityImmutableError,
     ControlZoneNotFoundError,
     CrossFacilityAssignmentError,
     CrossSiteAssignmentError,
     FacilityCodeConflictError,
     FacilityNotFoundError,
     FacilitySiteArchivedError,
-    FacilitySiteImmutableError,
     ParentFacilityNotFoundError,
     ParentSiteNotFoundError,
     PrimaryMeasurementExistsError,
@@ -81,19 +79,20 @@ from ai_greenhouse.topology.schemas import (
 SITE_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"code"})
 """Site fields fixed at creation time. Naming one in a ``PATCH`` is an error."""
 
-FACILITY_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"code"})
-"""Facility fields reported as ``immutable_field``.
+FACILITY_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"code", "site_id"})
+"""Facility fields fixed at creation time.
 
-``site_id`` is immutable too but is answered with its own, more specific code;
-see :class:`~ai_greenhouse.topology.exceptions.FacilitySiteImmutableError`.
+``site_id`` is one of them: a facility never moves between sites, because the
+zones and points below it would have to move with it. The refusal is reported
+under the shared ``immutable_field`` code and names the field in its details.
 """
 
-CONTROL_ZONE_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"code"})
-"""Control zone fields reported as ``immutable_field``.
+CONTROL_ZONE_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"code", "facility_id"})
+"""Control zone fields fixed at creation time.
 
-``facility_id`` is immutable too but is answered with its own, more specific
-code; see
-:class:`~ai_greenhouse.topology.exceptions.ControlZoneFacilityImmutableError`.
+``facility_id`` is one of them: a zone belongs to exactly one facility, and the
+points assigned to it are scoped by that facility too, so re-parenting a zone
+would silently break those assignments.
 """
 
 ROLE_ALLOWED_POINT_KINDS: dict[ZonePointRole, frozenset[PointKind]] = {
@@ -343,9 +342,6 @@ class FacilityService:
         Fields absent from the request body are left alone. An explicit ``null``
         is treated the same way, because no facility field is nullable.
 
-        ``code`` is checked before ``site_id``, so a body naming both is
-        answered with ``immutable_field``.
-
         Args:
             facility_id: Identifier of the facility to update.
             payload: The validated request body.
@@ -356,7 +352,6 @@ class FacilityService:
         Raises:
             FacilityNotFoundError: If no facility has that identifier.
             ImmutableFieldError: If the body names a field fixed at creation.
-            FacilitySiteImmutableError: If the body names ``site_id``.
         """
         facility: Facility = await self.get_facility(facility_id)
 
@@ -364,11 +359,9 @@ class FacilityService:
         immutable: set[str] = submitted & FACILITY_IMMUTABLE_FIELDS
         if immutable:
             raise ImmutableFieldError(
-                "Facility code cannot be changed after creation",
+                "A facility's code and site cannot be changed after creation",
                 details={"fields": sorted(immutable), "facility_id": str(facility_id)},
             )
-        if "site_id" in submitted:
-            raise FacilitySiteImmutableError(facility_id)
 
         if payload.name is not None:
             facility.name = payload.name
@@ -506,9 +499,6 @@ class ControlZoneService:
         Fields absent from the request body are left alone. An explicit ``null``
         is treated the same way, because no zone field is nullable.
 
-        ``code`` is checked before ``facility_id``, so a body naming both is
-        answered with ``immutable_field``.
-
         Args:
             control_zone_id: Identifier of the zone to update.
             payload: The validated request body.
@@ -519,7 +509,6 @@ class ControlZoneService:
         Raises:
             ControlZoneNotFoundError: If no zone has that identifier.
             ImmutableFieldError: If the body names a field fixed at creation.
-            ControlZoneFacilityImmutableError: If the body names ``facility_id``.
         """
         control_zone: ControlZone = await self.get_control_zone(control_zone_id)
 
@@ -527,14 +516,12 @@ class ControlZoneService:
         immutable: set[str] = submitted & CONTROL_ZONE_IMMUTABLE_FIELDS
         if immutable:
             raise ImmutableFieldError(
-                "Control zone code cannot be changed after creation",
+                "A control zone's code and facility cannot be changed after creation",
                 details={
                     "fields": sorted(immutable),
                     "control_zone_id": str(control_zone_id),
                 },
             )
-        if "facility_id" in submitted:
-            raise ControlZoneFacilityImmutableError(control_zone_id)
 
         if payload.name is not None:
             control_zone.name = payload.name

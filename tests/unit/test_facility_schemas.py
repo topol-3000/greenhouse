@@ -113,7 +113,7 @@ def test_update_accepts_site_id_so_the_service_can_refuse_it() -> None:
     payload = FacilityUpdate.model_validate({"site_id": str(uuid4())})
 
     assert "site_id" in payload.model_fields_set, (
-        "site_id must reach the service, which answers 409 facility_site_immutable"
+        "site_id must reach the service, which answers 409 immutable_field"
     )
 
 
