@@ -118,3 +118,11 @@ Tests use `pytest-asyncio` in `auto` mode. Integration tests run against the
 real PostgreSQL service and skip when no `DATABASE_URL` is set — SQLite is not
 a supported substitute. Unit tests live in `tests/unit/`, integration tests in
 `tests/integration/`.
+
+**Read [`tests/README.md`](tests/README.md) before adding tests.** It states
+which layer asserts what and is a hard requirement, not a suggestion: the
+Milestone 1 suite had to be cut by 40% because the same rule was checked
+through schemas, endpoints, ORM metadata and the database independently. Assert
+each rule at the lowest layer that can fail when it breaks, build fixtures with
+`tests/integration/factories.py`, and give every invariant a test that asserts
+its *refusal*.

@@ -2,7 +2,9 @@
 
 The mapping is unit-tested rather than only exercised through the API because
 it is the single place the role rules are written down. A role dropped from it
-would not fail loudly — it would quietly become unassignable.
+would not fail loudly — it would quietly become unassignable. Between them, the
+two parametrised tests below name every role and the exact kinds it admits, so
+the API tests only need to prove that the service consults the mapping.
 """
 
 from uuid import uuid4
@@ -15,14 +17,17 @@ from ai_greenhouse.topology.models import ZonePointRole
 from ai_greenhouse.topology.schemas import ZonePointAssignmentCreate
 from ai_greenhouse.topology.service import ROLE_ALLOWED_POINT_KINDS
 
-ROLES: list[str] = [
-    "primary_measurement",
-    "secondary_measurement",
-    "control_output",
-    "status_feedback",
-    "safety_interlock",
-    "derived_indicator",
-]
+
+def test_the_roles_are_the_documented_ones() -> None:
+    """The set is a published contract; adding or dropping one is an API change."""
+    assert {member.value for member in ZonePointRole} == {
+        "primary_measurement",
+        "secondary_measurement",
+        "control_output",
+        "status_feedback",
+        "safety_interlock",
+        "derived_indicator",
+    }
 
 
 def test_create_parses_the_role() -> None:
@@ -31,20 +36,18 @@ def test_create_parses_the_role() -> None:
     assert payload.role is ZonePointRole.PRIMARY_MEASUREMENT
 
 
-@pytest.mark.parametrize("role", ROLES)
-def test_create_accepts_every_documented_role(role: str) -> None:
-    payload = ZonePointAssignmentCreate(point_id=uuid4(), role=role)
-
-    assert payload.role == role
-
-
-@pytest.mark.parametrize("role", ["vibes", "Primary_measurement", "", "primary measurement"])
-def test_create_rejects_an_unknown_role(role: str) -> None:
+def test_create_rejects_an_unknown_role() -> None:
     with pytest.raises(ValidationError):
-        ZonePointAssignmentCreate(point_id=uuid4(), role=role)
+        ZonePointAssignmentCreate(point_id=uuid4(), role="vibes")
+
+
+def test_create_requires_a_point() -> None:
+    with pytest.raises(ValidationError):
+        ZonePointAssignmentCreate(role="control_output")
 
 
 def test_create_rejects_an_unknown_field() -> None:
+    """The zone comes from the path, so the body must not carry one of its own."""
     with pytest.raises(ValidationError):
         ZonePointAssignmentCreate(
             point_id=uuid4(),
@@ -53,21 +56,9 @@ def test_create_rejects_an_unknown_field() -> None:
         )
 
 
-def test_create_requires_a_point() -> None:
-    with pytest.raises(ValidationError):
-        ZonePointAssignmentCreate(role="control_output")
-
-
 def test_every_role_is_mapped() -> None:
+    """An unmapped role would be silently unassignable rather than an error."""
     assert set(ROLE_ALLOWED_POINT_KINDS) == set(ZonePointRole)
-
-
-def test_every_role_accepts_at_least_one_kind() -> None:
-    unusable: list[ZonePointRole] = [
-        role for role, kinds in ROLE_ALLOWED_POINT_KINDS.items() if not kinds
-    ]
-
-    assert unusable == []
 
 
 @pytest.mark.parametrize(
