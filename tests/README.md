@@ -1,6 +1,6 @@
 # Testing guidelines
 
-Written after the Milestone 1 test review (KAN-35). The suite went from 545 to
+Written after the topology test review (KAN-35). The suite went from 545 to
 321 tests without losing coverage of a single public behaviour or domain
 invariant, because most of what was removed asserted the same rule a second and
 third time at a different layer.
@@ -41,7 +41,7 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
 | `integration/<module>/` | Domain invariants through the real endpoints, each by its **refusal**; endpoint-specific filters; what PostgreSQL enforces and the service cannot. | Field validation, the pagination envelope or the archive lifecycle a second time. |
 | `integration/telemetry/` | The one module with no endpoint of its own: its tests call the service on the `session` fixture, commit or roll back as `get_session` would, and assert what reached the database. | The state response shape or the point rules a second time. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, and a `downgrade base` that really empties it. | Table shapes that a domain test already asserts. |
-| `integration/test_demo_seed.py`, `test_milestone_1_demo.py` | The seed is idempotent; the documented scenario works end to end in the documented order. | Any rule not visible from the scenario. |
+| `integration/test_demo_seed.py`, `test_topology_demo.py`, `test_simulation_demo.py` | The seed is idempotent; each documented walkthrough works end to end in the documented order. | Any rule not visible from the scenario. |
 
 ## Rules of thumb
 
@@ -70,7 +70,7 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
    not `test_assign_409_case_3`. If a name needs the word "and", it is probably
    two tests — or two assertions that belong in one.
 
-## Adding tests for a new milestone
+## Adding tests for new behaviour
 
 Ask, in this order:
 
@@ -80,7 +80,7 @@ Ask, in this order:
    attempts it against the constraint directly.
 4. Does it change the schema? → the migration tests already cover upgrade,
    `check` and downgrade; add nothing unless the migration carries data.
-5. Is it visible in the milestone's demo scenario? → extend that one test rather
+5. Is it visible in a documented demo walkthrough? → extend that one test rather
    than writing a parallel one.
 
 Anything that answers "no" four times over is probably not worth a test.

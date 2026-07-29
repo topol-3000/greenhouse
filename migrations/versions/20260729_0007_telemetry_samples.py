@@ -6,23 +6,23 @@ Create Date: 2026-07-29
 
 Drafted with ``alembic revision --autogenerate`` and reviewed by hand.
 ``quality`` is stored as ``VARCHAR`` with a ``CHECK`` constraint, following the
-convention set in Milestone 1.1; the constraint and key names come from the
-metadata naming convention.
+shared enum convention; the constraint and key names come from the metadata
+naming convention.
 
 The table carries no ``updated_at`` and no soft-delete flag. Samples are
 append-only, and a column that exists only to record a change would be a
 standing invitation to make one.
 
-One index is created, and it is the Milestone 2.2 history read written down:
+One index is created, and it is the telemetry history read written down:
 ``(point_id, observed_at DESC, id DESC)`` returns one point's samples newest
 first, with ``id`` breaking ties. A standalone index on ``point_id`` is
-deliberately **not** created — it would be a prefix of this one, which is the
-duplication Milestone 1 already paid to learn about.
+deliberately **not** created — it would be a prefix of this one, and a foreign
+key needs no index of its own when a composite one leads with it.
 
-``simulation_run_id`` is created without a foreign key. ``simulation_runs``
-arrives with the run entity in M2.3, and that story's migration attaches the
-``ON DELETE RESTRICT`` constraint. The column is created here because the rows
-that carry it are written here.
+``simulation_run_id`` is created without a foreign key. ``simulation_runs`` is
+created by a later migration, which attaches the ``ON DELETE RESTRICT``
+constraint. The column is created here because the rows that carry it are
+written here.
 
 ``point_id`` uses ``ON DELETE RESTRICT``: no point that has ever been measured
 can be deleted out from under its own history, not even by a direct ``DELETE``

@@ -7,8 +7,8 @@ Create Date: 2026-07-28
 Drafted with ``alembic revision --autogenerate`` and reviewed by hand. Columns
 are ordered as declared on the entities rather than in mixin resolution order.
 ``point_kind``, ``data_type``, ``status`` and ``quality`` are stored as
-``VARCHAR`` with a ``CHECK`` constraint, following the convention set in
-Milestone 1.1; the constraint and index names come from the metadata naming
+``VARCHAR`` with a ``CHECK`` constraint, following the shared enum
+convention; the constraint and index names come from the metadata naming
 convention.
 
 Both tables are created by one migration because neither is useful alone: a
@@ -17,8 +17,8 @@ exists to carry, so they are introduced and removed together.
 
 ``points`` deliberately has **no** ``device_id``, ``channel``, ``gpio``,
 ``register`` or ``modbus_address`` column, and **no** ``value``,
-``last_value`` or ``last_reading`` column. The physical binding arrives in
-Milestone 6 on its own table, and the value lives in
+``last_value`` or ``last_reading`` column. A physical binding would arrive on
+its own table, and the value lives in
 ``point_current_states``. Adding either kind of column here would tie a point's
 identity to hardware or to a moment in time, which is exactly what the entity
 exists to avoid.

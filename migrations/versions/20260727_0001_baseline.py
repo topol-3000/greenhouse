@@ -1,4 +1,4 @@
-"""Create the empty Milestone 0 baseline.
+"""Create the empty schema baseline.
 
 Revision ID: 20260727_0001
 Revises:

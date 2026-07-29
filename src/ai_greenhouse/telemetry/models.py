@@ -32,8 +32,8 @@ HISTORY_INDEX_NAME: str = "ix_telemetry_samples_point_id_observed_at_id"
 ``(point_id, observed_at DESC, id DESC)`` is the history read of one point,
 newest first, with ``id`` breaking ties between samples sharing an instant. No
 standalone index on ``point_id`` accompanies it: that index would be a prefix
-of this one, and Milestone 1 already paid for learning that a foreign key does
-not need an index of its own when a composite one leads with it.
+of this one, and a foreign key does not need an index of its own when a
+composite one leads with it.
 """
 
 
@@ -64,8 +64,8 @@ class TelemetrySample(Base):
         received_at: When this system took the value in. Never defaulted from
             ``observed_at``, and never merged with it.
         quality: Trustworthiness of the value, from
-            :class:`~ai_greenhouse.points.models.DataQuality`. The Milestone 2
-            simulator records ``simulated``.
+            :class:`~ai_greenhouse.points.models.DataQuality`. The simulator
+            records ``simulated``.
     """
 
     __tablename__ = "telemetry_samples"

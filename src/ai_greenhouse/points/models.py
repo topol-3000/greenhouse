@@ -6,7 +6,7 @@ Two rules govern the ``points`` table and outrank any convenience:
    ``register`` and ``modbus_address`` must never appear here.
 2. It holds no current value. ``value``, ``last_value`` and ``last_reading``
    live on :class:`PointCurrentState`, and the history behind them lives in the
-   telemetry stream introduced in Milestone 2.
+   telemetry stream.
 """
 
 from datetime import datetime
@@ -38,7 +38,7 @@ from ai_greenhouse.infrastructure.database.base import (
 )
 
 DEFAULT_REVISION: int = 0
-"""Revision every state row starts at. It stays there for the whole of M1."""
+"""Revision every state row starts at, before any telemetry has replaced it."""
 
 
 class PointKind(StrEnum):
@@ -72,9 +72,8 @@ class PointDataType(StrEnum):
 class DataQuality(StrEnum):
     """Trustworthiness of a value, carried by the value rather than logged apart.
 
-    ``NO_DATA`` is the state every point starts in and the only one Milestone 1
-    ever produces; the rest are the vocabulary telemetry will use from
-    Milestone 2 on.
+    ``NO_DATA`` is the state every point starts in; the rest are the vocabulary
+    telemetry writes with.
     """
 
     NO_DATA = "no_data"
@@ -164,9 +163,9 @@ class PointCurrentState(Base):
     """The last known state of one point, kept for fast reads.
 
     Exactly one row exists per point, created in the same transaction as the
-    point itself. It is a projection and not the historical truth: from
-    Milestone 2 it can be rebuilt from the telemetry stream, which is where a
-    value's history actually lives.
+    point itself. It is a projection and not the historical truth: it can be
+    rebuilt from the telemetry stream, which is where a value's history actually
+    lives.
 
     There is no ``created_at``. The row is created with its point and never
     re-created, so its own creation instant carries no information the point
@@ -184,9 +183,9 @@ class PointCurrentState(Base):
             ``observed_at`` on purpose — a buffered edge gateway makes the two
             differ by hours.
         quality: Trustworthiness of the value, from :class:`DataQuality`.
-        revision: Update counter. It exists so that Milestone 2 can add
-            concurrent-update semantics without a migration, and stays at
-            :data:`DEFAULT_REVISION` for the whole of Milestone 1.
+        revision: Update counter. It starts at :data:`DEFAULT_REVISION` and
+            counts the replacements the projection has actually taken, so a
+            re-delivered or out-of-order sample leaves it alone.
         updated_at: Instant this projection last changed.
     """
 

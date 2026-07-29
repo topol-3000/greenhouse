@@ -1,6 +1,6 @@
 """Coverage of the Alembic migrations themselves, on a database of their own.
 
-Milestone 1 requires three things of every migration: it applies to an empty
+Three things are required of every migration: it applies to an empty
 database, it leaves the schema in step with the declarative metadata, and it has
 a ``downgrade`` that really works. The application's own test database cannot be
 used to check the last one — downgrading it would pull the schema out from under

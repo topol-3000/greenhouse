@@ -88,5 +88,5 @@ def test_the_constrained_roles_accept_exactly_the_documented_kinds(
     [ZonePointRole.SAFETY_INTERLOCK, ZonePointRole.DERIVED_INDICATOR],
 )
 def test_the_unconstrained_roles_accept_every_kind(role: ZonePointRole) -> None:
-    """These two are open on purpose; narrowing them is a decision M1 has not made."""
+    """These two are open on purpose; narrowing them is a decision not yet made."""
     assert ROLE_ALLOWED_POINT_KINDS[role] == set(PointKind)

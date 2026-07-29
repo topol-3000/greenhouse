@@ -7,8 +7,8 @@ Create Date: 2026-07-28
 Drafted with ``alembic revision --autogenerate`` and reviewed by hand. Columns
 are ordered as declared on the entity rather than in mixin resolution order.
 ``zone_type`` and ``status`` are stored as ``VARCHAR`` with a ``CHECK``
-constraint, following the convention set in Milestone 1.1; the constraint and
-index names come from the metadata naming convention.
+constraint, following the shared enum convention; the constraint and index
+names come from the metadata naming convention.
 
 The table has no ``site_id``. The site is reached through ``facility_id``, which
 is what makes "a control zone never crosses a facility boundary" a property of

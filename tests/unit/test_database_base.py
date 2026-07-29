@@ -102,7 +102,7 @@ def test_enums_are_stored_as_varchar_with_a_check_constraint() -> None:
     assert "CREATE TYPE" not in ddl, "native PostgreSQL enums are not the chosen convention"
 
 
-def test_constraints_follow_the_milestone_0_naming_convention() -> None:
+def test_constraints_follow_the_metadata_naming_convention() -> None:
     ddl = compiled_ddl()
 
     assert "CONSTRAINT pk_sample PRIMARY KEY (id)" in ddl

@@ -78,7 +78,7 @@ DEMO_POINTS: list[dict[str, Any]] = [
         "unit": None,
     },
 ]
-"""The four points of the Milestone 1 demonstration growbox."""
+"""The four points of the demonstration growbox."""
 
 DEMO_ROLES: list[str] = [
     "primary_measurement",
@@ -92,14 +92,14 @@ DEMO_ROLES: list[str] = [
 async def build_demo_growbox(
     http_client: httpx.AsyncClient,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
-    """Build the whole Milestone 1 demonstration growbox through the API.
+    """Build the whole demonstration growbox through the API.
 
     Args:
         http_client: The client under test.
 
     Returns:
         The site, the facility, the Main Climate zone and its four points, in
-        the order the milestone documents them.
+        the documented order.
     """
     site = await create_site(http_client)
     facility = await create_facility(http_client, site["id"])

@@ -1,6 +1,6 @@
 """End-to-end coverage of the telemetry write boundary against real PostgreSQL.
 
-Milestone 2 exposes no ingestion endpoint, so these tests call
+There is no ingestion endpoint, so these tests call
 ``TelemetryService.record_sample`` the way the simulation runtime will: on a
 session of their own, which they commit or roll back exactly as the request
 dependency would. Everything they assert afterwards is read back from the
@@ -55,7 +55,7 @@ STATE_RESPONSE_FIELDS: set[str] = {
     "revision",
     "updated_at",
 }
-"""The Milestone 1 shape of ``GET /points/{id}/state``, which M2 must not change."""
+"""The published shape of ``GET /points/{id}/state``, which a write must not change."""
 
 
 def sample(point_id: str, **overrides: Any) -> TelemetrySampleRecord:
@@ -182,7 +182,7 @@ async def test_the_state_endpoint_returns_the_recorded_value(
     body: dict[str, Any] = response.json()
 
     assert response.status_code == 200, response.text
-    assert set(body) == STATE_RESPONSE_FIELDS, "Milestone 1 clients must keep working"
+    assert set(body) == STATE_RESPONSE_FIELDS, "the published state shape must not change"
     assert body["value"] == 21.5
     assert body["quality"] == DataQuality.SIMULATED
     assert body["revision"] == DEFAULT_REVISION + 1

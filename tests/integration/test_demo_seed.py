@@ -1,4 +1,4 @@
-"""Integration coverage for the idempotent Milestone 1 seed command."""
+"""Integration coverage for the idempotent demo seed command."""
 
 import json
 import os
@@ -23,11 +23,11 @@ COUNTED_MODELS: tuple[type[Any], ...] = (
     PointCurrentState,
     ZonePointAssignment,
 )
-"""All six Milestone 1 tables whose row counts the seed may affect."""
+"""All six topology tables whose row counts the seed may affect."""
 
 
 async def _entity_counts(connection: AsyncConnection) -> dict[str, int]:
-    """Count every Milestone 1 table in the current test transaction.
+    """Count every topology table in the current test transaction.
 
     Args:
         connection: PostgreSQL connection shared with the seed sessions.

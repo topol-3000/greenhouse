@@ -1,6 +1,6 @@
 """The write contract of the telemetry module.
 
-This is not an HTTP body. Milestone 2 exposes no ingestion endpoint, and
+This is not an HTTP body. There is no ingestion endpoint, and
 :class:`TelemetrySampleRecord` is the in-process argument
 :meth:`~ai_greenhouse.telemetry.service.TelemetryService.record_sample` accepts
 from the simulator today and from a device adapter later. It is a schema rather

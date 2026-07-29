@@ -1,4 +1,4 @@
-"""Create the Milestone 1 basil growbox through the existing domain services.
+"""Create the demo basil growbox through the existing domain services.
 
 The repository reads in this module exist only to make the operation
 idempotent. No model is inserted, updated or deleted directly: all writes go
@@ -115,7 +115,7 @@ DEMO_POINTS: tuple[DemoPoint, ...] = (
         role=ZonePointRole.STATUS_FEEDBACK,
     ),
 )
-"""The complete point set and zone composition of the Milestone 1 demo."""
+"""The complete point set and zone composition of the demo growbox."""
 
 
 def _log_entity(
@@ -325,7 +325,7 @@ async def _get_or_create_assignment(
 
 
 async def seed_demo(session: AsyncSession) -> DemoSeedResult:
-    """Create or resolve the complete Milestone 1 demonstration growbox.
+    """Create or resolve the complete demonstration growbox.
 
     The caller owns the transaction. A failure therefore rolls the whole seed
     back instead of leaving a partially created growbox.

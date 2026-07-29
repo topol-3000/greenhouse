@@ -11,8 +11,8 @@ rollback belongs to the ``get_session`` request dependency. A point and its
 state projection are created inside one such transaction — here, in the
 service, and not by a database trigger.
 
-Nothing in this module writes a point's value. There is no telemetry in
-Milestone 1, and the projection stays at ``quality = no_data`` until there is.
+Nothing in this module writes a point's value. A new projection starts at
+``quality = no_data``, and only the telemetry write boundary changes it.
 """
 
 from decimal import Decimal
@@ -210,8 +210,8 @@ class PointService:
             point_id: The point whose state to read.
 
         Returns:
-            The point's state projection. Throughout Milestone 1 this carries
-            no value and ``quality = no_data``.
+            The point's state projection. Until telemetry writes to it, this
+            carries no value and ``quality = no_data``.
 
         Raises:
             PointNotFoundError: If no point has that identifier.

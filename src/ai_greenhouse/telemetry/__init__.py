@@ -9,8 +9,8 @@ stream rather than as a second source of truth.
 
 Everything enters through
 :meth:`~ai_greenhouse.telemetry.service.TelemetryService.record_sample`. The
-Milestone 2 simulator calls it in process; a device ingestion adapter will call
-the same method later. No other code path — and no database trigger — writes
+simulator calls it in process; a device ingestion adapter will call the same
+method later. No other code path — and no database trigger — writes
 ``point_current_states``, which is what keeps the two properties this module
 exists for enforceable in one place:
 

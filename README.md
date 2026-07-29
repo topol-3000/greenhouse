@@ -3,17 +3,16 @@
 [![CI](https://github.com/topol-3000/greenhouse/actions/workflows/ci.yml/badge.svg)](https://github.com/topol-3000/greenhouse/actions/workflows/ci.yml)
 
 AI Greenhouse is a modular-monolith backend for incrementally building greenhouse
-automation scenarios. Milestone 0 provided the runnable technical foundation:
-FastAPI, PostgreSQL, migrations, configuration, structured logging, and a
-database-aware health endpoint. Milestone 1 provides the complete digital
-growbox topology: sites, facilities, control zones, logical points, current-state
-projections, zone-point assignments, and a single-request facility
-configuration.
+automation scenarios. It runs on FastAPI with PostgreSQL, Alembic migrations,
+typed configuration, structured logging, and a database-aware health endpoint.
 
-Milestone 2 adds append-only telemetry, current-state updates, telemetry
-history, deterministic climate simulation, persisted runs, and a
-single-process runtime. The runtime is Python 3.14 with PostgreSQL 18.
-Authentication, devices, control automation, and frontend are not included yet.
+The implemented domain is the complete digital growbox topology — sites,
+facilities, control zones, logical points, current-state projections,
+zone-point assignments, and a single-request facility configuration — plus
+append-only telemetry, current-state updates, telemetry history, deterministic
+climate simulation, persisted runs, and a single-process runtime. The runtime is
+Python 3.14 with PostgreSQL 18. Authentication, devices, control automation, and
+frontend are not included.
 
 ## Prerequisites
 
@@ -71,7 +70,7 @@ If PostgreSQL cannot execute the health query, the endpoint returns HTTP 503 wit
 The response never includes connection strings, credentials, exception details,
 or stack traces. Technical failure context is written to secret-redacted JSON logs.
 
-## Seed the Milestone 1 demo
+## Seed the demo growbox
 
 With PostgreSQL running, create the complete basil growbox with one command:
 
@@ -105,10 +104,10 @@ writes use the same domain services as the HTTP API. The command emits
 structured JSON logs containing every created or found identifier; it does not
 run automatically when the API container starts.
 
-## Milestone 1 demo walkthrough
+## Topology demo walkthrough
 
 The following Bash session starts the stack, seeds it, discovers the generated
-identifiers, and reads the complete Milestone 1 API scenario:
+identifiers, and reads the complete topology API scenario:
 
 ```bash
 docker compose up --build -d
@@ -141,16 +140,16 @@ curl -fsS "http://localhost:8000/api/v1/facilities/${FACILITY_ID}/configuration"
 ```
 
 Each point-state response, and every short state in the final configuration,
-has `"quality": "no_data"` and `"value": null`. Milestone 1 defines the
-logical identities and their empty state projections; it does not produce
-values.
+has `"quality": "no_data"` and `"value": null`. The topology defines the logical
+identities and their empty state projections; it does not produce values. Values
+arrive through telemetry, which the next walkthrough drives with the simulator.
 
-## Milestone 2 demo walkthrough
+## Simulation demo walkthrough
 
-Start from the same M1 seed; it supplies the topology and stable logical point
-IDs, but creates no simulation run or telemetry. This copy-pasteable Bash
-session discovers those IDs, creates and starts a run, reads changing
-temperature and humidity, and stops the run:
+Start from the same seed; it supplies the topology and stable logical point IDs,
+but creates no simulation run or telemetry. This copy-pasteable Bash session
+discovers those IDs, creates and starts a run, reads changing temperature and
+humidity, and stops the run:
 
 ```bash
 docker compose up --build -d
@@ -516,8 +515,8 @@ Rules worth knowing before calling it:
 - `code` follows the same slug rule as a site, but is unique **within its
   facility** only. Two facilities may each hold a `main-climate`;
 - overlapping zones are allowed on purpose. Two `climate` zones in one facility
-  are accepted; the conflict between them is resolved later by priority and
-  policy, which arrive with the control loops of Milestone 3;
+  are accepted; the conflict between them is resolved by priority and policy,
+  which belong to control loops and are not implemented;
 - a zone cannot be created inside an archived facility;
 - `PATCH` accepts `name`, `zone_type` and `status` only. A zone never moves
   between facilities, because the points assigned to it are scoped by that
@@ -538,8 +537,8 @@ Rules worth knowing before calling it:
 
 An assignment says that a point takes part in a zone and what part it plays
 there. It is what turns three independent lists into one growbox description,
-and what lets Milestone 3 tell a control loop's process variable from its
-actuator output.
+and what will let a control loop tell its process variable from its actuator
+output.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/control-zones/4c8f2a01-77b3-4e0d-8a51-3b6e0d9f1c22/points \
@@ -571,8 +570,8 @@ Rules worth knowing before calling it:
 - a role only suits some kinds of point: `control_output` needs a `control`
   point, `status_feedback` needs a `status` one, and both measurement roles need
   a `measurement` or `derived` one. `safety_interlock` and `derived_indicator`
-  accept any kind — narrowing them is a domain decision this milestone has not
-  made;
+  accept any kind — narrowing them is a domain decision that has not been made
+  yet;
 - a zone and a point of **different sites** cannot be linked, and a point that
   belongs to another facility of the same site cannot be either. A point with no
   facility belongs to the site as a whole — an outdoor temperature — and any
@@ -604,8 +603,8 @@ Rules worth knowing before calling it:
 A point is the stable logical identity of a value: air temperature, fan power,
 pump running. It carries the *meaning* of the value and deliberately nothing
 about where that value comes from — no device, no channel, no GPIO pin, no
-Modbus register. When a sensor is replaced in Milestone 6, its binding changes
-and the point, its history and every rule referring to it do not.
+Modbus register. When a sensor is replaced, only its binding changes; the point,
+its history and every rule referring to it do not.
 
 ```http
 POST   /api/v1/points
@@ -650,8 +649,7 @@ curl -X POST http://localhost:8000/api/v1/points \
 Rules worth knowing before calling it:
 
 - `point_kind` is one of `measurement`, `control`, `status` and `derived`. A
-  `derived` point is accepted, but nothing computes one until a later
-  milestone;
+  `derived` point is accepted, but nothing computes one yet;
 - `data_type` is one of `float`, `integer`, `boolean` and `string`;
 - `unit` is optional and **refused** for `boolean` points. A numeric point may
   leave it `null`: pH, an EC ratio and a light-utilisation index are
@@ -677,8 +675,9 @@ Rules worth knowing before calling it:
   deleted at the database level either (`ON DELETE RESTRICT`).
 
 Every point owns exactly one state projection, created with it in the same
-transaction. Throughout Milestone 1 it is empty — nothing writes a point's
-value yet, and no endpoint offers to:
+transaction. It starts empty, and no HTTP endpoint writes it: values reach it
+only through the telemetry write boundary, which the simulator drives in
+process.
 
 ```bash
 curl http://localhost:8000/api/v1/points/b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40/state
@@ -697,8 +696,9 @@ curl http://localhost:8000/api/v1/points/b7d5e0a3-2c19-4f6b-8e02-5a1d7c3f9b40/st
 ```
 
 `observed_at` and `received_at` stay apart on purpose: a buffered edge gateway
-makes the two differ by hours. `revision` exists so that Milestone 2 can add
-concurrent-update semantics without a migration, and stays at `0` until then.
+makes the two differ by hours. `revision` counts the replacements the projection
+has actually taken: it starts at `0` and increments only when a newer sample
+replaces the current value, so a re-delivered sample leaves it alone.
 
 | Situation | HTTP | `error.code` |
 | --- | --- | --- |
@@ -715,20 +715,24 @@ concurrent-update semantics without a migration, and stays at `0` until then.
 | Site or facility is archived | 409 | `parent_archived` |
 | `PATCH` names a field that defines the point | 409 | `immutable_field` |
 
-## Milestone boundaries
+## Boundaries
 
-The M1 seed deliberately remains a topology-only growbox:
+The seed deliberately creates a topology-only growbox — no simulation,
+automation, telemetry, or device fixtures — and the following are not part of
+the system:
 
 - no `Area` physical-space hierarchy;
 - no assignment history — removing a zone-point assignment removes only that
   current link;
 - no authentication or authorization;
-- no devices, channels, bindings, or physical addresses.
+- no devices, channels, bindings, or physical addresses;
+- no public telemetry ingestion endpoint, and no device or edge infrastructure;
+- no commands, control loops, or UI;
+- no distributed workers: the simulation runtime is single-process and lives
+  inside the API application.
 
-M2 fills point state through append-only telemetry and the in-process simulator,
-but adds no public ingestion endpoint, device or edge infrastructure, commands,
-control loops, UI, or distributed worker. The seed still contains no simulation,
-automation, telemetry, or device fixtures.
+Point state is filled by append-only telemetry, which the in-process simulator
+drives.
 
 ## Configuration
 
@@ -842,7 +846,7 @@ src/ai_greenhouse/
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
 ├── simulation/          # Deterministic climate runs and in-process runtime
-├── seed/                # Explicit, idempotent Milestone 1 demo seed
+├── seed/                # Explicit, idempotent demo growbox seed
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```

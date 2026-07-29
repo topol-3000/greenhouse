@@ -113,7 +113,7 @@ service is how the two drift apart.
 ``safety_interlock`` and ``derived_indicator`` accept every kind on purpose. A
 safety interlock can be a measured limit, a hardware trip signal or a computed
 condition, and none of the three is more legitimate than the others. Narrowing
-either role would be a domain decision this milestone has not made, and one that
+either role would be a domain decision that has not been made, and one that
 cannot be reversed without invalidating assignments that already exist.
 
 Every role is listed. A role absent from this table would be silently
@@ -680,7 +680,7 @@ class ZonePointAssignmentService:
         """Remove one point from a zone's composition.
 
         The point itself is untouched: this deletes the link, and the point
-        keeps its identity, its code and, from Milestone 2, its history.
+        keeps its identity, its code and its telemetry history.
 
         Args:
             control_zone_id: The zone from the request path.
@@ -707,9 +707,9 @@ class FacilityConfigurationService:
 
     The document is built from a fixed number of statements — the facility, its
     site, its zones, the assignments of those zones and its points with their
-    state — and never by loading an object graph. That is a requirement of the
-    milestone and not an optimisation: a growbox with a hundred points must cost
-    the same number of queries as one with four.
+    state — and never by loading an object graph. That is a documented contract
+    and not an optimisation: a growbox with a hundred points must cost the same
+    number of queries as one with four.
     """
 
     def __init__(self, session: AsyncSession) -> None:

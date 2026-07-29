@@ -1,4 +1,4 @@
-"""End-to-end proof of the complete Milestone 1 HTTP demonstration."""
+"""End-to-end proof of the complete topology HTTP demonstration."""
 
 from typing import Any
 
@@ -51,7 +51,7 @@ DEMO_POINTS: tuple[dict[str, Any], ...] = (
         "role": "status_feedback",
     },
 )
-"""Points and assignments created by the copy-pasteable M1 scenario."""
+"""Points and assignments created by the copy-pasteable topology scenario."""
 
 
 async def _post(
@@ -74,7 +74,7 @@ async def _post(
     return response.json()
 
 
-async def test_milestone_1_demo_scenario(http_client: httpx.AsyncClient) -> None:
+async def test_topology_demo_scenario(http_client: httpx.AsyncClient) -> None:
     """Build and read the complete demo in the documented HTTP order."""
     site: dict[str, Any] = await _post(
         http_client,

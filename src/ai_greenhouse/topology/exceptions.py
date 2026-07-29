@@ -270,7 +270,6 @@ class AssignmentPointArchivedError(ParentArchivedError):
 class CrossSiteAssignmentError(ConflictError):
     """The point and the zone belong to different sites.
 
-    This is the invariant the milestone's Definition of Done names explicitly.
     The zone's site is not stored on the zone; it is reached through the zone's
     facility, which is why both identifiers are reported.
     """

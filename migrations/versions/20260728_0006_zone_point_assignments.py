@@ -5,19 +5,19 @@ Revises: 20260728_0005
 Create Date: 2026-07-28
 
 Drafted with ``alembic revision --autogenerate`` and reviewed by hand. ``role``
-is stored as ``VARCHAR`` with a ``CHECK`` constraint, following the convention
-set in Milestone 1.1; the constraint and index names come from the metadata
-naming convention.
+is stored as ``VARCHAR`` with a ``CHECK`` constraint, following the shared enum
+convention; the constraint and index names come from the metadata naming
+convention.
 
 The table has ``created_at`` and no ``updated_at``: nothing about an existing
 link can change, so a modification instant would never be written. It has no
-``status`` either, because this is the one entity of Milestone 1 that is really
-deleted rather than archived.
+``status`` either, because this is the one entity that is really deleted rather
+than archived.
 
 ``effective_from`` and ``effective_to`` from the domain model are deliberately
-absent. No scenario in Milestones 1 to 3 reads the history of a zone's
-composition, and introducing the columns now would mean every query has to
-filter on them for the whole time nothing writes them.
+absent. Nothing reads the history of a zone's composition, and introducing the
+columns now would mean every query has to filter on them for the whole time
+nothing writes them.
 
 The composite unique constraint is on ``(control_zone_id, point_id, role)``
 rather than on ``(control_zone_id, point_id)``: the same point may take part in

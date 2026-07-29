@@ -22,8 +22,9 @@ the target and are opened only when the current task needs them.
 - `points` owns stable logical `Point` identities and `PointCurrentState`.
 - `telemetry` owns append-only `TelemetrySample` persistence, the idempotent
   write boundary, current-state projection updates, and read-only history.
-- `seed` creates the idempotent Milestone 1 basil-growbox demo through domain
-  services.
+- `simulation` owns `SimulationRun` persistence, the pure `simple-climate-v1`
+  model, and the single-process in-application runtime that drives runs.
+- `seed` creates the idempotent basil-growbox demo through domain services.
 - Domain modules use `models.py`, `schemas.py`, `repository.py`, `service.py`,
   and `exceptions.py` when those layers are needed.
 - Routes handle HTTP only. Services enforce invariants and must not import
@@ -32,26 +33,20 @@ the target and are opened only when the current task needs them.
   commit and rollback.
 - `api/errors.py` maps safe domain failures to HTTP; credentials, SQL, driver
   detail, and stack traces must never enter responses.
-- `main` contains the complete M1 topology and the M2 telemetry write/history
-  path. Simulation persistence, the climate model, runtime, and run API are not
-  implemented yet.
 
-## Current milestone
+## Scope
 
-Milestone 2 adds deterministic environment simulation and telemetry without
-introducing control automation. Its canonical contract is
-[Milestone 2 scope](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/2850819/Milestone+2+scope).
+Implemented: the growbox topology with stable logical point IDs, append-only
+telemetry, the current-state projection, telemetry history, simulation runs, the
+deterministic climate model, and the in-application runtime.
 
-M2 reuses the M1 growbox and logical point IDs. It includes append-only
-telemetry, current-state projection, telemetry history, `SimulationRun`, a pure
-`simple-climate-v1` model, and a single-process in-application runtime.
-Commands, control loops, devices, Edge/MQTT, authentication, UI, distributed
-workers, and a generic public ingestion endpoint remain out of scope.
+Out of scope: commands, control loops, devices, Edge/MQTT, authentication, UI,
+distributed workers, and a generic public ingestion endpoint.
 
 ## Invariants and development rules
 
 - A logical `Point` is stable and separate from a physical sensor or channel.
-  Do not add device bindings in M2.
+  Do not add device bindings.
 - Telemetry samples are append-only. Reusing a sample ID is idempotent and must
   not increment the state revision.
 - An out-of-order sample stays in history but cannot replace a newer current
@@ -91,8 +86,8 @@ For a normal task, read only:
 
 Open a linked architecture page or an ADR only to answer a specific question.
 Do not automatically read the entire Confluence space, a parent Epic, closed
-stories, completed milestone documents, the context audit, or
-[historical M1 diagrams](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/3833868/snapshot+Milestone+1).
+stories, completed scope documents, the context audit, or historical snapshot
+diagrams.
 
 ## Canonical references
 
@@ -103,12 +98,12 @@ stories, completed milestone documents, the context audit, or
 - [Domain model](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/1376257):
   target terms and invariants; future entities are not implemented by default.
 - [Roadmap](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/1409026/roadmap):
-  milestone sequence only.
-- [Milestone 2 scope](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/2850819/Milestone+2+scope):
-  the single canonical technical scope for M2.
+  delivery sequence only.
+- [Current scope](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/2850819/):
+  the single canonical technical scope of the work in progress.
 
 When sources conflict, code, migrations, and executable tests describe current
-reality. M2 scope wins for M2 boundaries. A Jira Story defines only its delta,
-and derived or historical documents never override a primary source. Report
-the conflict and fix its canonical owner separately instead of duplicating the
-disputed rule.
+reality. The current scope page wins for scope boundaries. A Jira Story defines
+only its delta, and derived or historical documents never override a primary
+source. Report the conflict and fix its canonical owner separately instead of
+duplicating the disputed rule.

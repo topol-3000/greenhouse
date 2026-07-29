@@ -27,7 +27,7 @@ class Site(UUIDPrimaryKeyMixin, TimestampMixin, StatusMixin, Base):
     """A physical location and the root of the topology.
 
     A site is never deleted; ``status`` moves to ``archived`` instead. The
-    ``code`` is unique across the whole installation because Milestone 1 has no
+    ``code`` is unique across the whole installation because there is no
     organization above the site to scope it to.
 
     Attributes:
@@ -122,11 +122,11 @@ class ControlZone(UUIDPrimaryKeyMixin, TimestampMixin, StatusMixin, Base):
     """A part of a facility that is measured or controlled as one unit.
 
     A zone is the boundary of *control*, not of physical space: the physical
-    sub-structure is ``Area``, which is deliberately out of scope until a later
-    milestone. Zones may therefore overlap freely. A climate zone, a lighting
-    zone and an irrigation zone can cover the same shelf, and two zones of the
-    same type in one facility are allowed as well — the domain resolves such an
-    overlap with priority and policy, not by forbidding it. This is also why
+    sub-structure is ``Area``, which is deliberately out of scope. Zones may
+    therefore overlap freely. A climate zone, a lighting zone and an irrigation
+    zone can cover the same shelf, and two zones of the same type in one facility
+    are allowed as well — the domain resolves such an overlap with priority and
+    policy, not by forbidding it. This is also why
     ``zone_type`` is a column rather than a table per kind of zone.
 
     There is no ``site_id``. The site is reached through ``facility_id``, which
@@ -185,20 +185,20 @@ class ZonePointAssignment(UUIDPrimaryKeyMixin, Base):
     """The link that says a point takes part in a zone, and in what part.
 
     This is what turns three independent tables into one growbox description,
-    and it is what Milestone 3 reads to know which point of a control loop is
-    the process variable and which one is the actuator output.
+    and it is what a control loop will read to know which point is the process
+    variable and which one is the actuator output.
 
-    It is the one entity in Milestone 1 that is really deleted rather than
-    archived. An assignment is a statement about the current composition of a
-    zone, not a record with a history: removing a point from a zone does not
-    retire the point, and an ``archived`` link would mean nothing that its
-    absence does not already say.
+    It is the one entity that is really deleted rather than archived. An
+    assignment is a statement about the current composition of a zone, not a
+    record with a history: removing a point from a zone does not retire the
+    point, and an ``archived`` link would mean nothing that its absence does not
+    already say.
 
     There is no ``updated_at`` and no ``status``. Nothing about an existing link
     can change — a different role is a different link — so a modification
     instant would never be written, and there is no ``effective_from`` or
     ``effective_to`` either: the history of a zone's composition is deliberately
-    out of scope until a milestone needs to read it.
+    out of scope until something needs to read it.
 
     Attributes:
         control_zone_id: The zone the point takes part in.

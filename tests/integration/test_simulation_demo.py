@@ -1,4 +1,4 @@
-"""End-to-end proof of the documented Milestone 2 demonstration."""
+"""End-to-end proof of the documented simulation demonstration."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -27,12 +27,12 @@ async def _get_items(http_client: httpx.AsyncClient, path: str) -> list[dict[str
     return response.json()["items"]
 
 
-async def test_milestone_2_demo_runs_from_seed_through_stop_without_real_time(
+async def test_simulation_demo_runs_from_seed_through_stop_without_real_time(
     app: FastAPI,
     http_client: httpx.AsyncClient,
     database_settings: Settings,
 ) -> None:
-    """Seed M1, run both simulated points for hours, and stop through HTTP."""
+    """Seed the growbox, run both simulated points for hours, stop through HTTP."""
     session_factory = cast(
         async_sessionmaker[AsyncSession],
         app.state.session_factory,

@@ -319,11 +319,11 @@ class ConfigurationZone(BaseModel):
 class ConfigurationPointState(BaseModel):
     """The last known state of a point inside the configuration document.
 
-    Throughout Milestone 1 this is ``value = null``, ``quality = "no_data"``
-    and ``observed_at = null`` for every point. ``received_at`` and ``revision``
-    are left to ``GET /api/v1/points/{point_id}/state``: the configuration
-    answers "what is this growbox and what does it read", not "how did this
-    value get here".
+    A point that has received no telemetry reads ``value = null``,
+    ``quality = "no_data"`` and ``observed_at = null``. ``received_at`` and
+    ``revision`` are left to ``GET /api/v1/points/{point_id}/state``: the
+    configuration answers "what is this growbox and what does it read", not "how
+    did this value get here".
     """
 
     model_config = ConfigDict(frozen=True)

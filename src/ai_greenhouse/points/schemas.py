@@ -2,8 +2,7 @@
 
 No schema here carries a device, a channel or a physical address, and none
 carries a current value. A point's value is read from its state projection
-through ``GET /api/v1/points/{point_id}/state`` and, in Milestone 1, is always
-absent.
+through ``GET /api/v1/points/{point_id}/state``.
 """
 
 from datetime import datetime
@@ -107,7 +106,7 @@ class PointRead(BaseModel):
 
     Carries no value and no physical address. Both omissions are the point of
     the entity: the value lives in :class:`PointStateRead`, and the hardware
-    behind it arrives in Milestone 6 without this representation changing.
+    behind it can arrive later without this representation changing.
     """
 
     model_config = ConfigDict(from_attributes=True, frozen=True)
@@ -131,10 +130,9 @@ class PointRead(BaseModel):
 class PointStateRead(BaseModel):
     """Representation returned by ``GET /api/v1/points/{point_id}/state``.
 
-    In Milestone 1 every point answers with ``value = null`` and
-    ``quality = "no_data"``: nothing writes to the projection yet. The shape is
-    already the final one, so the clients written against it keep working when
-    telemetry starts filling it in.
+    A point that has received no telemetry answers with ``value = null`` and
+    ``quality = "no_data"``. No endpoint writes this projection: it is filled
+    only through the telemetry write boundary.
     """
 
     model_config = ConfigDict(from_attributes=True, frozen=True)

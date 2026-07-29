@@ -1,6 +1,6 @@
 """End-to-end coverage of the zone-point assignment API against real PostgreSQL.
 
-This is where the milestone's headline rules live — a zone and a point must
+This is where the headline assignment rules live — a zone and a point must
 belong to the same site and the same facility, a role must suit the kind of
 point that takes it, and a zone has at most one primary measurement. Every one
 of them is asserted by its refusal, and where a row could still have been

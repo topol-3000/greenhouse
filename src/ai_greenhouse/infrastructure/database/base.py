@@ -31,7 +31,7 @@ from ai_greenhouse.infrastructure.database.metadata import metadata
 
 
 class Base(DeclarativeBase):
-    """Declarative base bound to the shared Milestone 0 metadata."""
+    """Declarative base bound to the shared application metadata."""
 
     metadata = metadata
 
@@ -52,7 +52,7 @@ def enum_column(
     Args:
         enum_class: The ``StrEnum`` whose values become the allowed strings.
         constraint_name: Fed into the ``ck_%(table_name)s_%(constraint_name)s``
-            naming convention introduced in Milestone 0.
+            naming convention of the shared metadata.
         **kwargs: Forwarded to :func:`~sqlalchemy.orm.mapped_column` (for
             example ``nullable``, ``default``, ``index``).
 

@@ -7,8 +7,8 @@ Create Date: 2026-07-28
 Drafted with ``alembic revision --autogenerate`` and reviewed by hand. Columns
 are ordered as declared on the entity rather than in mixin resolution order.
 ``facility_type`` and ``status`` are stored as ``VARCHAR`` with a ``CHECK``
-constraint, following the convention set in Milestone 1.1; the constraint and
-index names come from the metadata naming convention.
+constraint, following the shared enum convention; the constraint and index
+names come from the metadata naming convention.
 
 The foreign key uses ``ON DELETE RESTRICT``: a site that still has facilities
 cannot be removed, not even by a direct ``DELETE`` against the database.

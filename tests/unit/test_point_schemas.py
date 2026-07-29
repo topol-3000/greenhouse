@@ -195,7 +195,7 @@ def test_update_rejects_an_unknown_status() -> None:
 
 
 def test_update_rejects_a_value() -> None:
-    """No request body writes a point's value in Milestone 1."""
+    """No request body writes a point's value."""
     with pytest.raises(ValidationError):
         PointUpdate.model_validate({"value": 21.5})
 

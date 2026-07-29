@@ -6,8 +6,8 @@ It contains no SQLAlchemy statement and no business rule; both live in
 
 A zone itself has no ``DELETE``: it is retired with
 ``PATCH {"status": "archived"}``. Its point assignments do, and they are the
-only resource in Milestone 1 that does — an assignment is a link, not a record
-with a history, so there is nothing about it to archive.
+only resource in the API that does — an assignment is a link, not a record with
+a history, so there is nothing about it to archive.
 """
 
 from typing import Annotated

@@ -6,8 +6,8 @@ It contains no SQLAlchemy statement and no business rule; both live in
 
 There is no ``DELETE``: a point is retired with
 ``PATCH {"status": "archived"}``. There is also **no endpoint that writes a
-point's value**. ``GET /points/{point_id}/state`` is read-only, and stays that
-way until telemetry arrives in Milestone 2.
+point's value**: ``GET /points/{point_id}/state`` is read-only, and the
+projection behind it is filled only through the telemetry write boundary.
 """
 
 from typing import Annotated
@@ -153,8 +153,8 @@ async def update_point(
 async def get_point_state(point_id: UUID, service: PointServiceDep) -> PointStateRead:
     """Read the last known state of one point.
 
-    Throughout Milestone 1 the answer is the empty projection created with the
-    point: no value, and ``quality = "no_data"``.
+    Until telemetry writes to it, the answer is the empty projection created
+    with the point: no value, and ``quality = "no_data"``.
 
     Args:
         point_id: Identifier of the point whose state to read.

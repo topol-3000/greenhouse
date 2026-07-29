@@ -2,7 +2,7 @@
 
 The most important assertions in this file are the ones about what a point is
 *not*: it carries no physical address and no current value. Those two absences
-are what let a sensor be replaced in Milestone 6 without invalidating a single
+are what let a sensor be replaced without invalidating a single
 recorded measurement, and they are the first thing a convenient-looking change
 would break.
 
@@ -51,7 +51,7 @@ DOCUMENTED_COLUMNS: set[str] = {
     "created_at",
     "updated_at",
 }
-"""Exactly the columns Milestone 1 documents for ``points``.
+"""Exactly the columns documented for ``points``.
 
 Asserting the whole set, rather than the absence of a list of guessed names,
 is what makes this a contract: a ``gpio`` column added in a hurry fails here
@@ -133,7 +133,7 @@ async def test_a_point_may_belong_to_the_site_alone(http_client: httpx.AsyncClie
 async def test_a_derived_point_is_accepted_without_any_computation(
     http_client: httpx.AsyncClient,
 ) -> None:
-    """``derived`` is a valid kind in M1; what computes it arrives much later."""
+    """``derived`` is a valid kind; nothing computes one yet."""
     site = await create_site(http_client)
 
     created = await create_point(
@@ -157,8 +157,8 @@ async def test_the_points_table_has_exactly_the_documented_columns(
     """The single most important invariant this module protects.
 
     A physical address ties the point to the hardware it is supposed to
-    outlive; a current value ties it to one moment in time. The binding arrives
-    in Milestone 6 on its own table, and the value lives in
+    outlive; a current value ties it to one moment in time. A binding would live
+    on its own table, and the value lives in
     ``point_current_states``.
     """
     columns = await connection.scalars(
@@ -263,7 +263,7 @@ async def test_no_endpoint_writes_a_point_value(
     http_client: httpx.AsyncClient,
     method: str,
 ) -> None:
-    """Milestone 1 creates the projection; nothing in it may write a value."""
+    """Creating a point creates the projection; nothing may write a value into it."""
     site = await create_site(http_client)
     created = await create_point(http_client, site["id"])
 
@@ -273,7 +273,7 @@ async def test_no_endpoint_writes_a_point_value(
         json={"value": 21.5, "quality": "good"},
     )
 
-    assert response.status_code == 405, "the state projection is read-only in Milestone 1"
+    assert response.status_code == 405, "the state projection is read-only over HTTP"
 
 
 async def test_the_state_stays_empty_after_a_point_is_updated(
