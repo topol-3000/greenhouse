@@ -1257,7 +1257,7 @@ async def test_every_refusal_leaves_the_two_tables_in_step(
         point_body(str(uuid4())),
         point_body(site["id"], facility_id=str(uuid4())),
         point_body(site["id"], data_type="boolean"),
-        point_body(site["id"], unit=None),
+        point_body(site["id"], data_type="string", min_value=0),
         point_body(site["id"], min_value=10, max_value=5),
     ]
 
