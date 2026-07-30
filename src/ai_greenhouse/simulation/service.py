@@ -12,7 +12,7 @@ from ai_greenhouse.infrastructure.database.base import StatusEnum
 from ai_greenhouse.points.exceptions import PointStateNotFoundError
 from ai_greenhouse.points.models import DataQuality, Point, PointCurrentState, PointDataType
 from ai_greenhouse.points.repository import PointCurrentStateRepository
-from ai_greenhouse.simulation.climate import ClimateState, step_climate
+from ai_greenhouse.simulation.climate import ClimateState, step_climate, step_climate_v2
 from ai_greenhouse.simulation.exceptions import (
     InvalidSimulationProgressError,
     InvalidSimulationTransitionError,
@@ -21,9 +21,16 @@ from ai_greenhouse.simulation.exceptions import (
     SimulationRunNotFoundError,
     SimulationZoneNotFoundError,
 )
-from ai_greenhouse.simulation.models import MODEL_VERSION, SimulationRun, SimulationStatus
+from ai_greenhouse.simulation.models import (
+    CURRENT_MODEL_VERSION,
+    MODEL_VERSION_V1,
+    MODEL_VERSION_V2,
+    SimulationRun,
+    SimulationStatus,
+)
 from ai_greenhouse.simulation.repository import SimulationRunRepository
 from ai_greenhouse.simulation.schemas import (
+    ClimateV2Parameters,
     SimulationParameters,
     SimulationRunCreate,
 )
@@ -36,6 +43,13 @@ NUMERIC_DATA_TYPES: frozenset[PointDataType] = frozenset(
 MEASUREMENT_ROLES: frozenset[ZonePointRole] = frozenset(
     {ZonePointRole.PRIMARY_MEASUREMENT, ZonePointRole.SECONDARY_MEASUREMENT}
 )
+FAN_POWER_METRIC_TYPE: str = "fan_power"
+"""Metric of the logical point ``simple-climate-v2`` reads as its fan state.
+
+The simulator resolves the point the same way the rest of the system addresses
+it — by metric, data type and zone role — and never by identifier, so replacing
+the simulated fan with a real one changes nothing here.
+"""
 TERMINAL_STATUSES: frozenset[SimulationStatus] = frozenset(
     {SimulationStatus.STOPPED, SimulationStatus.FAILED}
 )
@@ -67,7 +81,7 @@ class SimulationRunService:
         run = SimulationRun(
             control_zone_id=payload.control_zone_id,
             status=SimulationStatus.CREATED,
-            model_version=MODEL_VERSION,
+            model_version=CURRENT_MODEL_VERSION,
             speed_multiplier=payload.speed_multiplier,
             parameters=payload.parameter_snapshot().model_dump(mode="json"),
             step_index=0,
@@ -193,7 +207,7 @@ class SimulationRunService:
             raise SimulationAlreadyRunningError(run.control_zone_id) from error
 
         temperature, humidity = await self._get_climate_points(run.control_zone_id)
-        parameters = SimulationParameters.model_validate(run.parameters)
+        parameters = self._validated_parameters(run)
         await self._record_values(
             run,
             temperature=temperature,
@@ -227,12 +241,7 @@ class SimulationRunService:
             temperature=self._numeric_state_value(temperature_state),
             humidity=self._numeric_state_value(humidity_state),
         )
-        parameters = SimulationParameters.model_validate(run.parameters)
-        next_state = step_climate(
-            current,
-            parameters,
-            float(run.speed_multiplier),
-        )
+        next_state = await self._next_climate_state(run, current)
         observed_at = run.virtual_time + timedelta(seconds=run.speed_multiplier)
         await self._record_values(
             run,
@@ -296,6 +305,112 @@ class SimulationRunService:
         run.virtual_time = observed_at
         run.step_index += 1
         await self._repository.flush()
+
+    def _validated_parameters(self, run: SimulationRun) -> SimulationParameters:
+        """Validate one run's snapshot against the model version it persisted.
+
+        This is the whole of the version dispatch: the persisted column decides
+        which snapshot the stored parameters have to satisfy, and the validated
+        type then decides which formula evaluates them. A run keeps the model it
+        was created with, so a v1 row read after M4 still reaches frozen v1.
+
+        Args:
+            run: The persisted run being started or advanced.
+
+        Returns:
+            The v1 snapshot, or the v2 snapshot that extends it.
+
+        Raises:
+            ValidationError: If the stored parameters do not match the version.
+            ValueError: If the stored version is not one this build executes.
+                Neither is reachable from a request: the version is server-owned
+                and the snapshot is written whole.
+        """
+        if run.model_version == MODEL_VERSION_V1:
+            return SimulationParameters.model_validate(run.parameters)
+        if run.model_version == MODEL_VERSION_V2:
+            return ClimateV2Parameters.model_validate(run.parameters)
+        raise ValueError("simulation run carries an unsupported model version")
+
+    async def _next_climate_state(
+        self,
+        run: SimulationRun,
+        current: ClimateState,
+    ) -> ClimateState:
+        """Evaluate one tick of the model this run persisted.
+
+        Args:
+            run: The running run being advanced.
+            current: The state read from the two measurement projections.
+
+        Returns:
+            The next state of the run's own model version.
+        """
+        parameters = self._validated_parameters(run)
+        delta_virtual_time = float(run.speed_multiplier)
+        if isinstance(parameters, ClimateV2Parameters):
+            return step_climate_v2(
+                current,
+                parameters,
+                delta_virtual_time,
+                fan_is_on=await self._fan_is_on(run.control_zone_id),
+            )
+        return step_climate(current, parameters, delta_virtual_time)
+
+    async def _fan_is_on(self, control_zone_id: UUID) -> bool:
+        """Read the zone's logical fan state as an input of the model step.
+
+        The projection is read, never written and never locked: the simulator
+        offers measurements and is told nothing back, and taking a lock here
+        would invert the order automation acquires the same two rows in.
+
+        A point that carries no value is off. That is a rule about *evaluating a
+        step* and not about the point, which keeps its ``no_data`` state until a
+        command actually sets it.
+
+        Args:
+            control_zone_id: The zone whose fan the run is cooled by.
+
+        Returns:
+            ``True`` only when the projection holds a boolean ``true``.
+        """
+        fan_power = await self._get_fan_power_point(control_zone_id)
+        state = await self._states.get_by_point_id(fan_power.id)
+        return state is not None and state.value is True
+
+    async def _get_fan_power_point(self, control_zone_id: UUID) -> Point:
+        """Resolve the one active boolean fan point the zone drives.
+
+        Archived points are already excluded by the query, so a retired fan is
+        simply not found. Nothing is chosen when the answer is ambiguous: a run
+        cooled by a silently picked point would be a run nobody can reproduce.
+
+        Args:
+            control_zone_id: The zone whose composition to read.
+
+        Returns:
+            The zone's ``control_output`` fan point.
+
+        Raises:
+            InvalidSimulationZoneError: If the zone has no such point, more than
+                one, or one whose data type cannot carry a fan state. Raised
+                during a step, it fails the run with the runtime's bounded
+                reason.
+        """
+        assignments = await self._repository.list_active_zone_points(control_zone_id)
+        fans = [
+            point
+            for assignment, point in assignments
+            if point.metric_type == FAN_POWER_METRIC_TYPE
+            and point.data_type is PointDataType.BOOLEAN
+            and assignment.role is ZonePointRole.CONTROL_OUTPUT
+        ]
+        if len(fans) != 1:
+            raise InvalidSimulationZoneError(
+                control_zone_id,
+                "required_fan_power_point_missing_or_ambiguous",
+            )
+        return fans[0]
 
     async def _get_climate_points(self, control_zone_id: UUID) -> tuple[Point, Point]:
         """Resolve the unique temperature and humidity points of a run."""

@@ -1,7 +1,7 @@
 """HTTP and lifecycle coverage for persisted simulation runs."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 import httpx
@@ -16,6 +16,8 @@ from ai_greenhouse.simulation.service import SimulationRunService
 from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord
 from ai_greenhouse.telemetry.service import TelemetryService
 from tests.integration.factories import (
+    Growbox,
+    archive,
     assign,
     count_rows,
     create_growbox,
@@ -27,10 +29,31 @@ SIMULATION_RUNS_URL: str = "/api/v1/simulation-runs"
 NOW: datetime = datetime(2026, 7, 29, 15, 0, tzinfo=UTC)
 
 
+class ClimateZone(NamedTuple):
+    """A climate zone and the points a ``simple-climate-v2`` run reads or writes."""
+
+    control_zone: dict[str, Any]
+    temperature: dict[str, Any]
+    humidity: dict[str, Any]
+    fan_power: dict[str, Any] | None
+    growbox: Growbox
+
+
 async def configured_climate(
     http_client: httpx.AsyncClient,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Create a climate zone with the two required active numeric points."""
+    *,
+    with_fan: bool = True,
+) -> ClimateZone:
+    """Create a climate zone with the points a ``simple-climate-v2`` run needs.
+
+    Args:
+        http_client: The client under test.
+        with_fan: Whether to wire the ``control_output`` fan point. A zone
+            without one is a zone whose v2 steps cannot resolve a fan state.
+
+    Returns:
+        The zone, its two measurement points and its fan point.
+    """
     growbox = await create_growbox(http_client)
     temperature = await create_point(
         http_client,
@@ -60,13 +83,39 @@ async def configured_climate(
     )
     assert temperature_assignment.status_code == 201, temperature_assignment.text
     assert humidity_assignment.status_code == 201, humidity_assignment.text
-    return growbox.control_zone, temperature, humidity
+    fan_power = await create_fan_power_point(http_client, growbox) if with_fan else None
+    return ClimateZone(growbox.control_zone, temperature, humidity, fan_power, growbox)
+
+
+async def create_fan_power_point(
+    http_client: httpx.AsyncClient,
+    growbox: Growbox,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Wire one boolean ``fan_power`` point into the zone as its control output."""
+    definition: dict[str, Any] = {
+        "facility_id": growbox.facility["id"],
+        "code": "fan_power",
+        "name": "Fan Power",
+        "point_kind": "control",
+        "metric_type": "fan_power",
+        "data_type": "boolean",
+        "unit": None,
+    } | overrides
+    point = await create_point(http_client, growbox.site["id"], **definition)
+    assignment = await assign(
+        http_client,
+        growbox.control_zone["id"],
+        point["id"],
+        "control_output",
+    )
+    assert assignment.status_code == 201, assignment.text
+    return point
 
 
 async def configured_climate_zone(http_client: httpx.AsyncClient) -> dict[str, Any]:
     """Create and return a valid climate zone."""
-    zone, _, _ = await configured_climate(http_client)
-    return zone
+    return (await configured_climate(http_client)).control_zone
 
 
 def run_body(control_zone_id: str, **overrides: object) -> dict[str, object]:
@@ -106,7 +155,7 @@ async def test_creation_persists_the_fixed_model_snapshot(
     assert response.status_code == 201, response.text
     assert body["control_zone_id"] == zone["id"]
     assert body["status"] == "created"
-    assert body["model_version"] == "simple-climate-v1"
+    assert body["model_version"] == "simple-climate-v2"
     assert body["step_index"] == 0
     assert body["virtual_time"] is None
     assert body["started_at"] is None
@@ -119,6 +168,7 @@ async def test_creation_persists_the_fixed_model_snapshot(
         "ambient_humidity": 50.0,
         "temperature_response_rate": 1.0 / 3600.0,
         "humidity_response_rate": 1.0 / 1800.0,
+        "fan_cooling_offset": 8.0,
     }
 
 
@@ -270,7 +320,7 @@ async def test_mid_step_failure_rolls_back_both_points_and_progress_then_fails_r
     connection: AsyncConnection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    zone, temperature, humidity = await configured_climate(http_client)
+    zone, temperature, humidity, _fan, _growbox = await configured_climate(http_client)
     created = await create_run(http_client, zone["id"])
     ticker = ManualTicker()
     clock = ManualClock(NOW)
@@ -307,6 +357,94 @@ async def test_mid_step_failure_rolls_back_both_points_and_progress_then_fails_r
     assert await count_rows(connection, "telemetry_samples") == 2
     assert temperature_state.json()["revision"] == 1
     assert humidity_state.json()["revision"] == 1
+    assert runtime.running_task_count == 0
+
+
+async def test_a_v2_step_follows_the_zone_logical_fan_state(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    session: AsyncSession,
+) -> None:
+    """Each tick reads the fan point again, so switching it reverses the trend.
+
+    Nothing here configures a control loop: the point is that the *simulator*
+    reads the logical state, not that automation wrote it.
+    """
+    climate = await configured_climate(http_client)
+    assert climate.fan_power is not None
+    created = await create_run(
+        http_client,
+        climate.control_zone["id"],
+        initial_temperature=27.0,
+        speed_multiplier=600,
+    )
+    ticker = ManualTicker()
+    clock = ManualClock(NOW)
+    install_runtime(app, clock=clock, ticker=ticker)
+    started = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/start")
+    assert started.status_code == 202, started.text
+
+    clock.advance(seconds=1)
+    await ticker.tick()
+    warmed = (await http_client.get(f"/api/v1/points/{climate.temperature['id']}/state")).json()
+
+    await TelemetryService(session).record_sample(
+        TelemetrySampleRecord(
+            id=uuid4(),
+            point_id=UUID(climate.fan_power["id"]),
+            value=True,
+            observed_at=NOW + timedelta(seconds=2),
+            received_at=NOW + timedelta(seconds=2),
+            quality="manually_entered",
+        )
+    )
+    await session.commit()
+
+    clock.advance(seconds=1)
+    await ticker.tick()
+    cooled = (await http_client.get(f"/api/v1/points/{climate.temperature['id']}/state")).json()
+
+    assert 27.0 < warmed["value"] < 30.0
+    assert cooled["value"] < warmed["value"]
+
+    stopped = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/stop")
+    assert stopped.status_code == 200
+
+
+@pytest.mark.parametrize("fan_configuration", ["missing", "archived", "ambiguous"])
+async def test_an_unresolvable_fan_point_fails_the_run_with_a_bounded_reason(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    connection: AsyncConnection,
+    fan_configuration: str,
+) -> None:
+    """No fan state is silently assumed: the step fails and the run records it."""
+    climate = await configured_climate(http_client, with_fan=fan_configuration != "missing")
+    if fan_configuration == "archived":
+        assert climate.fan_power is not None
+        await archive(http_client, f"/api/v1/points/{climate.fan_power['id']}")
+    if fan_configuration == "ambiguous":
+        await create_fan_power_point(
+            http_client,
+            climate.growbox,
+            code="fan_power_secondary",
+            name="Second Fan Power",
+        )
+    created = await create_run(http_client, climate.control_zone["id"])
+    ticker = ManualTicker()
+    clock = ManualClock(NOW)
+    runtime = install_runtime(app, clock=clock, ticker=ticker)
+    started = await http_client.post(f"{SIMULATION_RUNS_URL}/{created['id']}/start")
+    assert started.status_code == 202, started.text
+
+    clock.advance(seconds=1)
+    await ticker.tick()
+
+    failed = (await http_client.get(f"{SIMULATION_RUNS_URL}/{created['id']}")).json()
+    assert failed["status"] == "failed"
+    assert failed["failure_reason"] == FAILURE_REASON
+    assert failed["step_index"] == 1
+    assert await count_rows(connection, "telemetry_samples") == 2
     assert runtime.running_task_count == 0
 
 
