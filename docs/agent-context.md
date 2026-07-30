@@ -130,12 +130,13 @@ diagrams.
   target terms and invariants; future entities are not implemented by default.
 - [Roadmap](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/1409026/roadmap):
   delivery sequence only.
-- [Current scope](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/6291457):
-  the single canonical technical scope of the work in progress — Milestone 4,
-  minimal UI and the complete `0.1` demo.
+- Current scope: none. Milestone 4 closed with the `0.1` release and its scope
+  page is archived; the next milestone has no approved scope yet. Until one
+  exists, the roadmap names the next product step and this file plus the code
+  describe what is implemented.
 
 When sources conflict, code, migrations, and executable tests describe current
-reality. The current scope page wins for scope boundaries. A Jira Story defines
-only its delta, and derived or historical documents never override a primary
-source. Report the conflict and fix its canonical owner separately instead of
-duplicating the disputed rule.
+reality. A current scope page, while one is active, wins for scope boundaries. A
+Jira Story defines only its delta, and derived or historical documents never
+override a primary source. Report the conflict and fix its canonical owner
+separately instead of duplicating the disputed rule.
