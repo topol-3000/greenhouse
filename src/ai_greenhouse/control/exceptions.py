@@ -14,11 +14,26 @@ from uuid import UUID
 from ai_greenhouse.core.exceptions import ConflictError, NotFoundError
 
 __all__ = [
+    "CommandNotFoundError",
     "ControlLoopExistsError",
     "ControlLoopNotFoundError",
     "InvalidControlLoopPointError",
     "InvalidControlLoopZoneError",
 ]
+
+
+class CommandNotFoundError(NotFoundError):
+    """No command exists with the requested identifier."""
+
+    code = "command_not_found"
+
+    def __init__(self, command_id: UUID) -> None:
+        """Report the missing command.
+
+        Args:
+            command_id: The identifier that could not be resolved.
+        """
+        super().__init__("Command not found", details={"command_id": str(command_id)})
 
 
 class ControlLoopNotFoundError(NotFoundError):

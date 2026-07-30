@@ -22,6 +22,7 @@ CONTROL_ZONES_URL: str = "/api/v1/control-zones"
 POINTS_URL: str = "/api/v1/points"
 SIMULATION_RUNS_URL: str = "/api/v1/simulation-runs"
 CONTROL_LOOPS_URL: str = "/api/v1/control-loops"
+COMMANDS_URL: str = "/api/v1/commands"
 
 DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     SITES_URL,

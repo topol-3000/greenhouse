@@ -23,13 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.api.pagination import PageParams
 from ai_greenhouse.control.exceptions import (
+    CommandNotFoundError,
     ControlLoopExistsError,
     ControlLoopNotFoundError,
     InvalidControlLoopPointError,
     InvalidControlLoopZoneError,
 )
-from ai_greenhouse.control.models import ControlLoop, ControlPolicyType
-from ai_greenhouse.control.repository import ControlLoopRepository
+from ai_greenhouse.control.models import Command, ControlLoop, ControlPolicyType
+from ai_greenhouse.control.repository import CommandRepository, ControlLoopRepository
 from ai_greenhouse.control.schemas import ControlLoopCreate
 from ai_greenhouse.infrastructure.database.base import StatusEnum
 from ai_greenhouse.points.exceptions import ReferencedPointNotFoundError
@@ -255,3 +256,61 @@ class ControlLoopService:
             raise InvalidControlLoopPointError(role.field, point_id, "metric_type_mismatch")
         if point.unit != role.unit:
             raise InvalidControlLoopPointError(role.field, point_id, "unit_mismatch")
+
+
+class CommandService:
+    """Reads the commands automation has applied.
+
+    Read-only on purpose. Nothing creates a command through this service, and
+    there is no endpoint that would: a command is a consequence of accepted
+    telemetry, never something a client asks for.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Build the service around one session.
+
+        Args:
+            session: The session of the request being served.
+        """
+        self._commands: CommandRepository = CommandRepository(session)
+
+    async def get_command(self, command_id: UUID) -> Command:
+        """Return one command or report it missing.
+
+        Args:
+            command_id: The command requested by the path.
+
+        Returns:
+            The stored command.
+
+        Raises:
+            CommandNotFoundError: If the path names no command.
+        """
+        command = await self._commands.get_by_id(command_id)
+        if command is None:
+            raise CommandNotFoundError(command_id)
+        return command
+
+    async def list_commands(
+        self,
+        *,
+        control_loop_id: UUID | None,
+        trigger_sample_id: UUID | None,
+        limit: int,
+    ) -> list[Command]:
+        """Return a bounded, newest-first window of applied commands.
+
+        Args:
+            control_loop_id: Restricts the result to one loop when given.
+            trigger_sample_id: Restricts the result to the commands one
+                measurement caused when given.
+            limit: Maximum number of commands to return.
+
+        Returns:
+            Matching commands, newest first.
+        """
+        return await self._commands.list_history(
+            control_loop_id=control_loop_id,
+            trigger_sample_id=trigger_sample_id,
+            limit=limit,
+        )

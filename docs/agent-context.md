@@ -28,7 +28,9 @@ the target and are opened only when the current task needs them.
   the idempotent applied `Command`, the loopback actuator boundary, and the
   source-independent ingestion path every in-process producer offers telemetry
   on.
-- `seed` creates the idempotent basil-growbox demo through domain services.
+- `seed` creates the idempotent basil-growbox demo through domain services and
+  carries the controlled automation-demonstration driver. Both are explicit
+  commands and neither runs at startup.
 - Domain modules use `models.py`, `schemas.py`, `repository.py`, `service.py`,
   and `exceptions.py` when those layers are needed.
 - Routes handle HTTP only. Services enforce invariants and must not import
