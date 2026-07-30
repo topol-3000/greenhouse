@@ -31,6 +31,15 @@ DEMO_CODES: dict[str, str] = {
     "facility": "basil-growbox",
     "control_zone": "main-climate",
 }
+
+DEMO_RUN: dict[str, float | int] = {
+    "speed_multiplier": 600,
+    "initial_temperature": 22.0,
+    "initial_humidity": 65.0,
+    "ambient_temperature": 30.0,
+    "ambient_humidity": 50.0,
+}
+"""The parameters the dashboard's Start action sends, and no model version."""
 DASHBOARD_POINT_CODES: frozenset[str] = frozenset(
     {"air_temperature", "air_humidity", "fan_power", "fan_running"}
 )
@@ -151,3 +160,77 @@ async def test_the_dashboard_reads_its_frame_from_existing_endpoints(
 
     stopped = await http_client.post(f"{API_URL}/simulation-runs/{created.json()['id']}/stop")
     assert stopped.status_code == 200, stopped.text
+
+
+async def test_the_start_and_stop_actions_use_the_documented_contracts(
+    app: FastAPI,
+    http_client: httpx.AsyncClient,
+    database_settings: Settings,
+) -> None:
+    """Start sends the documented parameters; the lifecycle answers the rest.
+
+    The dashboard's own guards — disabled buttons and one cycle in flight — are
+    browser state and are not asserted here. What is asserted is the server side
+    they rest on: the payload the page sends, the lifecycle timestamps the
+    activity list is composed from, and the conflict a duplicate action gets,
+    which the page shows as a recoverable error rather than as a second run.
+    """
+    session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
+    assert await run_demo_command(database_settings, session_factory=session_factory) == 0
+    site = await _find_by_code(http_client, f"{API_URL}/sites", DEMO_CODES["site"])
+    facility = await _find_by_code(
+        http_client,
+        f"{API_URL}/facilities?site_id={site['id']}",
+        DEMO_CODES["facility"],
+    )
+    control_zone = await _find_by_code(
+        http_client,
+        f"{API_URL}/control-zones?facility_id={facility['id']}",
+        DEMO_CODES["control_zone"],
+    )
+    install_runtime(app, clock=ManualClock(NOW), ticker=ManualTicker())
+
+    created = await http_client.post(
+        f"{API_URL}/simulation-runs",
+        json={"control_zone_id": control_zone["id"], **DEMO_RUN},
+    )
+    assert created.status_code == 201, created.text
+    run = created.json()
+    assert run["model_version"] == "simple-climate-v2"
+    assert run["parameters"] == {
+        "initial_temperature": 22.0,
+        "initial_humidity": 65.0,
+        "ambient_temperature": 30.0,
+        "ambient_humidity": 50.0,
+        "temperature_response_rate": 1.0 / 3600.0,
+        "humidity_response_rate": 1.0 / 1800.0,
+        "fan_cooling_offset": 8.0,
+    }
+
+    started = await http_client.post(f"{API_URL}/simulation-runs/{run['id']}/start")
+    duplicate_start = await http_client.post(f"{API_URL}/simulation-runs/{run['id']}/start")
+    stopped = await http_client.post(f"{API_URL}/simulation-runs/{run['id']}/stop")
+    duplicate_stop = await http_client.post(f"{API_URL}/simulation-runs/{run['id']}/stop")
+
+    assert started.status_code == 202, started.text
+    assert started.json()["status"] == "running"
+    assert duplicate_start.status_code == 409
+    assert duplicate_start.json()["error"]["code"] == "invalid_simulation_transition"
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()["status"] == "stopped"
+    assert duplicate_stop.status_code == 409
+    assert duplicate_stop.json()["error"]["code"] == "invalid_simulation_transition"
+
+    terminal = stopped.json()
+    assert terminal["created_at"] is not None
+    assert terminal["started_at"] is not None
+    assert terminal["stopped_at"] is not None
+
+    restarted = await http_client.post(
+        f"{API_URL}/simulation-runs",
+        json={"control_zone_id": control_zone["id"], **DEMO_RUN},
+    )
+    assert restarted.status_code == 201, restarted.text
+    assert restarted.json()["id"] != run["id"]
+    unchanged = await _get(http_client, f"{API_URL}/simulation-runs/{run['id']}")
+    assert unchanged == terminal
