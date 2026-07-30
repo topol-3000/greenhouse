@@ -105,6 +105,40 @@ body {
   display: none;
 }
 
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.controls button {
+  padding: 0.5rem 1.1rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.4rem;
+  background: var(--accent);
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.controls button[data-action="stop"] {
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.controls button:disabled {
+  border-color: var(--line);
+  background: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.controls__hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .readings {
   display: grid;
   gap: 1rem;
@@ -173,4 +207,44 @@ body {
   margin: 0.6rem 0 0;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.activity {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+}
+
+.activity__label {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.activity__list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity__list li {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.activity__time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.activity__empty {
+  color: var(--muted);
 }
