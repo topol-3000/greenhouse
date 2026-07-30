@@ -48,8 +48,14 @@ deterministic climate model, the in-application runtime, hysteresis control-loop
 configuration, and the automation flow that turns an accepted temperature into
 an applied fan command.
 
-Out of scope: devices, Edge/MQTT, authentication, UI, distributed workers, a
-generic public ingestion endpoint, and any endpoint that creates a command.
+Planned by the active scope and not implemented yet: a climate model whose
+temperature responds to logical fan state, and one same-origin dashboard page
+that starts, observes and stops the demo run. Treat both as absent until the
+code, migrations and tests show otherwise.
+
+Out of scope: devices, Edge/MQTT, authentication, a frontend framework,
+distributed workers, a generic public ingestion endpoint, and any endpoint that
+creates a command.
 
 ## Invariants and development rules
 
@@ -114,8 +120,9 @@ diagrams.
   target terms and invariants; future entities are not implemented by default.
 - [Roadmap](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/1409026/roadmap):
   delivery sequence only.
-- [Current scope](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/2850819/):
-  the single canonical technical scope of the work in progress.
+- [Current scope](https://twinkling-rain.atlassian.net/wiki/spaces/AIGH/pages/6291457):
+  the single canonical technical scope of the work in progress — Milestone 4,
+  minimal UI and the complete `0.1` demo.
 
 When sources conflict, code, migrations, and executable tests describe current
 reality. The current scope page wins for scope boundaries. A Jira Story defines
