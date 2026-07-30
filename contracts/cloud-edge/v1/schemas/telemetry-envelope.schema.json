@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-greenhouse.example/contracts/cloud-edge/v1/schemas/telemetry-envelope.schema.json",
+  "title": "Cloud Edge telemetry envelope v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "gateway_id",
+    "messages"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "1.0"
+    },
+    "gateway_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "batch_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/message"
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "sensor",
+            "actuator",
+            "controller",
+            "operator",
+            "derived"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "point_id",
+        "data_type",
+        "value",
+        "observed_at",
+        "quality",
+        "source"
+      ],
+      "properties": {
+        "message_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "point_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "data_type": {
+          "enum": [
+            "float",
+            "integer",
+            "boolean",
+            "string"
+          ]
+        },
+        "value": {},
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "quality": {
+          "enum": [
+            "good",
+            "uncertain",
+            "bad",
+            "stale",
+            "out_of_range",
+            "sensor_fault",
+            "simulated",
+            "manually_entered"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "float"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "integer"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "boolean"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

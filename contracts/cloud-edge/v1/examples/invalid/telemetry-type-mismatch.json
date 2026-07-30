@@ -1,0 +1,18 @@
+{
+  "contract_version": "1.0",
+  "gateway_id": "11111111-1111-4111-8111-111111111111",
+  "messages": [
+    {
+      "message_id": "55555555-5555-4555-8555-555555555555",
+      "point_id": "22222222-2222-4222-8222-222222222222",
+      "data_type": "float",
+      "value": true,
+      "observed_at": "2026-07-30T12:05:00Z",
+      "quality": "good",
+      "source": {
+        "kind": "sensor",
+        "id": "climate.temperature"
+      }
+    }
+  ]
+}

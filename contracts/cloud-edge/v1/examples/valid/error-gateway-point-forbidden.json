@@ -1,0 +1,7 @@
+{
+  "contract_version": "1.0",
+  "error": {
+    "code": "gateway_point_forbidden",
+    "message": "The logical point is not authorized to this gateway."
+  }
+}

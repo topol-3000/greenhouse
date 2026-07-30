@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-greenhouse.example/contracts/cloud-edge/v1/schemas/command-list.schema.json",
+  "title": "Cloud Edge pending command list v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "gateway_id",
+    "commands"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "1.0"
+    },
+    "gateway_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "commands": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "point_id",
+        "reported_point_id",
+        "data_type",
+        "desired_value",
+        "issued_at",
+        "state"
+      ],
+      "properties": {
+        "command_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "point_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "reported_point_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "data_type": {
+          "enum": [
+            "float",
+            "integer",
+            "boolean",
+            "string"
+          ]
+        },
+        "desired_value": {},
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "const": "pending"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "float"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "desired_value": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "integer"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "desired_value": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "boolean"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "desired_value": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "data_type": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "data_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "desired_value": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "contract": "ai-greenhouse-cloud-edge",
+  "version": "1.0",
+  "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+  "operations": {
+    "telemetry_ingestion": {
+      "http": {
+        "method": "POST",
+        "path": "/api/v1/edge/telemetry",
+        "success_status": 200
+      },
+      "request_schema": "schemas/telemetry-envelope.schema.json",
+      "response_schema": "schemas/telemetry-ingestion-result.schema.json",
+      "valid_requests": [
+        "examples/valid/telemetry-single.json",
+        "examples/valid/telemetry-batch.json",
+        "examples/valid/telemetry-command-state.json"
+      ],
+      "invalid_requests": [
+        "examples/invalid/telemetry-received-at.json",
+        "examples/invalid/telemetry-type-mismatch.json",
+        "examples/invalid/telemetry-no-data-quality.json"
+      ],
+      "valid_responses": [
+        "examples/valid/telemetry-ingestion-result.json"
+      ]
+    },
+    "command_retrieval": {
+      "http": {
+        "method": "GET",
+        "path": "/api/v1/edge/gateways/{gateway_id}/commands",
+        "success_status": 200
+      },
+      "response_schema": "schemas/command-list.schema.json",
+      "valid_responses": [
+        "examples/valid/command-list.json",
+        "examples/valid/command-list-empty.json"
+      ]
+    },
+    "command_acknowledgement": {
+      "http": {
+        "method": "PUT",
+        "path": "/api/v1/edge/gateways/{gateway_id}/commands/{command_id}/acknowledgement",
+        "success_status": 200
+      },
+      "request_schema": "schemas/command-acknowledgement.schema.json",
+      "response_schema": "schemas/command-acknowledgement.schema.json",
+      "valid_requests": [
+        "examples/valid/command-acknowledgement-applied.json",
+        "examples/valid/command-acknowledgement-rejected.json"
+      ],
+      "valid_responses": [
+        "examples/valid/command-acknowledgement-applied.json",
+        "examples/valid/command-acknowledgement-rejected.json"
+      ]
+    },
+    "error": {
+      "response_schema": "schemas/error.schema.json",
+      "valid_responses": [
+        "examples/valid/error-gateway-point-forbidden.json",
+        "examples/valid/error-validation.json"
+      ]
+    }
+  }
+}
