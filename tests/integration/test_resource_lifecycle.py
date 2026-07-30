@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 
 from tests.integration.factories import (
+    CONTROL_LOOPS_URL,
     CONTROL_ZONES_URL,
     FACILITIES_URL,
     POINTS_URL,
@@ -31,6 +32,7 @@ async def test_no_domain_entity_can_be_deleted(http_client: httpx.AsyncClient) -
         "control zone": f"{CONTROL_ZONES_URL}/{control_zone['id']}",
         "point": f"{POINTS_URL}/{point['id']}",
         "simulation run": f"{SIMULATION_RUNS_URL}/{uuid4()}",
+        "control loop": f"{CONTROL_LOOPS_URL}/{uuid4()}",
     }
 
     for entity, url in entity_urls.items():

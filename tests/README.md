@@ -23,7 +23,8 @@ tests/
     ├── api/                    cross-cutting HTTP behaviour, mostly without a database
     ├── topology/               sites, facilities, zones, assignments, configuration
     ├── points/                 points and their state projection
-    └── telemetry/              the write boundary that fills that projection
+    ├── telemetry/              the write boundary that fills that projection
+    └── control/                control loops and the automation they drive
 ```
 
 Integration tests run against a real PostgreSQL instance and skip when
