@@ -18,6 +18,15 @@ fan switching on as the growbox warms past `26 °C` and off again as it cools be
 `24 °C`, and stops the run. The runtime is Python 3.14 with PostgreSQL 18.
 Authentication, devices, and a frontend framework are not included.
 
+## Cloud ↔ Edge contracts
+
+The transport-neutral v1.0 telemetry and command contract is published under
+[`contracts/cloud-edge/v1/`](contracts/cloud-edge/v1/README.md). It contains
+standalone JSON Schemas, valid and invalid examples, idempotency and lifecycle
+semantics, error behavior, compatibility rules, and the minimal HTTP/JSON
+mapping planned for implementation in KAN-54. This repository does not expose
+those public ingestion or command-delivery endpoints yet.
+
 ## Prerequisites
 
 - Docker with Docker Compose

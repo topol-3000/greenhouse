@@ -1,0 +1,17 @@
+{
+  "contract_version": "1.0",
+  "error": {
+    "code": "validation_error",
+    "message": "The telemetry envelope is invalid.",
+    "details": [
+      {
+        "location": [
+          "messages",
+          0,
+          "observed_at"
+        ],
+        "message": "A timezone-aware RFC 3339 date-time is required."
+      }
+    ]
+  }
+}

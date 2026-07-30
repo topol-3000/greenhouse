@@ -21,6 +21,7 @@ RUN uv sync --frozen
 
 COPY alembic.ini ./
 COPY migrations ./migrations
+COPY contracts ./contracts
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint
 COPY tests ./tests
 
