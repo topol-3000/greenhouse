@@ -36,8 +36,10 @@ simulation domain or a dependency on any producer implementation.
   `gateway_point_forbidden`. Command lookup does not reveal another gateway's
   commands and answers `command_not_found`.
 
-The persistence and management API for gateway configuration belong to
-KAN-54. They are deliberately not defined here.
+Gateway persistence and the administrative management-plane API are
+deliberately not part of this closed data-plane contract. The implemented
+provisioning operations and their stable-code/operational-UUID distinction are
+documented in the repository [README](../../../README.md#gateway-management-plane-api).
 
 ### Telemetry
 

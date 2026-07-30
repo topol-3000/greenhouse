@@ -1,14 +1,16 @@
-"""Database access for gateway identity and point ownership."""
+"""Database access for gateway identity and point authorization."""
 
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Select, and_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from ai_greenhouse.gateways.models import Gateway, GatewayPoint
-from ai_greenhouse.infrastructure.database.base import StatusEnum
+from ai_greenhouse.infrastructure.database.base import StatusEnum, utc_now
 from ai_greenhouse.points.models import Point
 
 
@@ -38,13 +40,78 @@ class GatewayRepository:
             statement = statement.with_for_update()
         return await self._session.scalar(statement)
 
+    async def get_by_code(self, code: str) -> Gateway | None:
+        """Load one gateway by its globally stable provisioning code."""
+        return await self._session.scalar(select(Gateway).where(Gateway.code == code))
+
+    async def insert_if_code_absent(self, gateway: Gateway) -> bool:
+        """Atomically claim a stable gateway code.
+
+        The database uniqueness constraint, rather than a check-then-insert
+        window, decides which concurrent provisioning request creates the row.
+        """
+        now: datetime = utc_now()
+        statement = (
+            insert(Gateway)
+            .values(
+                id=gateway.id,
+                code=gateway.code,
+                site_id=gateway.site_id,
+                status=StatusEnum.ACTIVE,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=[Gateway.code])
+            .returning(Gateway.id)
+        )
+        return await self._session.scalar(statement) is not None
+
     async def list_authorized_points(self, gateway_id: UUID) -> list[UUID]:
         """Return the gateway's explicit point identifiers."""
         return list(
             await self._session.scalars(
-                select(GatewayPoint.point_id).where(GatewayPoint.gateway_id == gateway_id)
+                select(GatewayPoint.point_id)
+                .where(GatewayPoint.gateway_id == gateway_id)
+                .order_by(GatewayPoint.point_id)
             )
         )
+
+    async def point_owners(self, point_ids: Sequence[UUID]) -> dict[UUID, UUID]:
+        """Return the gateway currently authorizing each requested point."""
+        if not point_ids:
+            return {}
+        rows = await self._session.execute(
+            select(GatewayPoint.point_id, GatewayPoint.gateway_id).where(
+                GatewayPoint.point_id.in_(point_ids)
+            )
+        )
+        return {point_id: gateway_id for point_id, gateway_id in rows}
+
+    async def authorize_points_if_absent(
+        self,
+        gateway_id: UUID,
+        point_ids: Sequence[UUID],
+    ) -> set[UUID]:
+        """Add authorization rows atomically and return the rows newly inserted."""
+        if not point_ids:
+            return set()
+        created_at: datetime = utc_now()
+        statement = (
+            insert(GatewayPoint)
+            .values(
+                [
+                    {
+                        "gateway_id": gateway_id,
+                        "point_id": point_id,
+                        "created_at": created_at,
+                    }
+                    for point_id in point_ids
+                ]
+            )
+            .on_conflict_do_nothing()
+            .returning(GatewayPoint.point_id)
+        )
+        return set(await self._session.scalars(statement))
 
     async def owns_point(self, gateway_id: UUID, point_id: UUID) -> bool:
         """Answer whether one point is explicitly authorized."""

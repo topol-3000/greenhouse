@@ -32,6 +32,11 @@ the target and are opened only when the current task needs them.
   the idempotent applied `Command`, the loopback actuator boundary, and the
   source-independent ingestion path every in-process producer offers telemetry
   on.
+- `gateways` owns stable administrative gateway codes, operational gateway UUIDs,
+  normalized site configuration, and additive one-owner logical-point
+  authorization. Its management API is separate from the Edge data plane.
+- `edge` owns the backward-compatible Cloud ↔ Edge v1 HTTP adapter for telemetry
+  submission, gateway-scoped command polling, and terminal acknowledgement.
 - `seed` creates the idempotent basil-growbox demo through domain services,
   carries the `demo-init` bootstrap that adds the `24-26 °C` control loop, and
   carries the controlled automation-demonstration driver. All three are explicit
@@ -52,13 +57,15 @@ Implemented: the growbox topology with stable logical point IDs, append-only
 telemetry, the current-state projection, telemetry history, simulation runs, both
 deterministic climate models, the in-application runtime, hysteresis control-loop
 configuration, the automation flow that turns an accepted temperature into an
-applied fan command, the idempotent `demo-init` bootstrap, and one same-origin
-dashboard page that starts, observes and stops the demo run.
+applied fan command, the idempotent `demo-init` bootstrap, one same-origin
+dashboard page that starts, observes and stops the demo run, administrative HTTP
+provisioning of stable Edge gateways and their authorized logical points, and
+the Cloud ↔ Edge v1 telemetry and command-delivery API.
 
-Out of scope: devices, Edge/MQTT, authentication, a frontend framework or build
-pipeline, distributed workers, WebSocket/SSE, a persisted event log, a dashboard
-aggregate endpoint, manual fan control, a generic public ingestion endpoint, and
-any endpoint that creates a command.
+Out of scope: devices, MQTT, production authentication, users/RBAC/multi-tenancy,
+a frontend framework or build pipeline, distributed workers, WebSocket/SSE, a
+persisted event log, a dashboard aggregate endpoint, manual fan control, and any
+endpoint that creates a command.
 
 ## Invariants and development rules
 
