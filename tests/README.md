@@ -42,7 +42,8 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
 | `integration/<module>/` | Domain invariants through the real endpoints, each by its **refusal**; endpoint-specific filters; what PostgreSQL enforces and the service cannot. | Field validation, the pagination envelope or the archive lifecycle a second time. |
 | `integration/telemetry/` | The one module with no endpoint of its own: its tests call the service on the `session` fixture, commit or roll back as `get_session` would, and assert what reached the database. | The state response shape or the point rules a second time. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, and a `downgrade base` that really empties it. | Table shapes that a domain test already asserts. |
-| `integration/test_demo_seed.py`, `test_topology_demo.py`, `test_simulation_demo.py`, `test_automation_demo.py` | The seed is idempotent; each documented walkthrough works end to end in the documented order. | Any rule not visible from the scenario. |
+| `integration/test_demo_seed.py`, `test_topology_demo.py`, `test_simulation_demo.py`, `test_automation_demo.py`, `test_dashboard_demo.py` | The seed is idempotent; each documented walkthrough works end to end in the documented order. | Any rule not visible from the scenario. |
+| `integration/test_zero_one_demo.py` | The `0.1` release scenario: `demo-init` is idempotent and refuses a conflicting loop, and one bootstrapped growbox driven through the browser's own endpoints closes `OFF → ON → OFF`. | Anything a focused test already owns — the v2 formula, page delivery, lifecycle conflicts. |
 
 ## Rules of thumb
 

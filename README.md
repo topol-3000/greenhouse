@@ -12,9 +12,11 @@ zone-point assignments, and a single-request facility configuration — plus
 append-only telemetry, current-state updates, telemetry history, deterministic
 climate simulation, persisted runs, a single-process runtime, and the first
 automation loop: an accepted temperature is evaluated by a hysteresis policy and
-turns a logical fan on or off through an idempotent command. The runtime is
-Python 3.14 with PostgreSQL 18. Authentication, devices, and a frontend are not
-included.
+turns a logical fan on or off through an idempotent command. Version `0.1` closes
+that loop visibly: one same-origin dashboard page starts the simulation, shows the
+fan switching on as the growbox warms past `26 °C` and off again as it cools below
+`24 °C`, and stops the run. The runtime is Python 3.14 with PostgreSQL 18.
+Authentication, devices, and a frontend framework are not included.
 
 ## Prerequisites
 
@@ -37,11 +39,19 @@ Wait for PostgreSQL readiness
         ↓
 Run alembic upgrade head
         ↓
+Run the idempotent demo-init bootstrap
+        ↓
 Start Uvicorn
 ```
 
 Compose also waits for the PostgreSQL health check, but the API performs its own
 bounded connection probe before running migrations.
+
+The bootstrap step runs only when the container is started without a command and
+`APP_ENV` is `local`, which is the default. An explicit command — `pytest`,
+`alembic`, a shell — runs exactly that and seeds nothing. `demo-init` is
+idempotent, so a second `docker compose up` finds what the first one created; it
+is described under [The 0.1 browser demo](#the-01-browser-demo).
 
 Verify the service:
 
@@ -71,6 +81,76 @@ If PostgreSQL cannot execute the health query, the endpoint returns HTTP 503 wit
 
 The response never includes connection strings, credentials, exception details,
 or stack traces. Technical failure context is written to secret-redacted JSON logs.
+
+## The 0.1 browser demo
+
+One command prepares everything and serves the dashboard:
+
+```bash
+docker compose up --build
+```
+
+Then open <http://localhost:8000/>.
+
+The startup bootstrap (`demo-init`) creates or finds the growbox described under
+[Seed the demo growbox](#seed-the-demo-growbox) plus one immutable `hysteresis-v1`
+control loop with `lower_threshold = 24.0` and `upper_threshold = 26.0`. It creates
+no simulation run, no telemetry and no command: the page starts out empty on
+purpose, and the reader presses Start themselves.
+
+### What to do and what to expect
+
+1. Before starting, the dashboard shows `Basil Growbox`, the run badge
+   `Not started`, `No data` for temperature, humidity and fan, and an empty chart.
+2. Press **Start simulation**. The page creates a `simple-climate-v2` run with
+   `22 °C` / `65 %`, ambient `30 °C` / `50 %` and speed multiplier `600`, starts it,
+   and begins refreshing once a second.
+3. Temperature climbs toward `30 °C`. Around five ticks in it passes `26 °C`, the
+   control loop applies `fan_power = true`, and the fan reading becomes `On`.
+4. With the fan on, the model aims `8 °C` below ambient, so temperature turns
+   around and falls.
+5. Around five ticks later it drops below `24 °C`, the loop applies
+   `fan_power = false`, and the fan reading returns to `Off`.
+6. Recent activity lists the whole story newest-first: the run's lifecycle, both
+   fan commands with their timestamps, and the latest temperatures.
+7. Reload the page. The badge, readings, chart and activity are rebuilt from the
+   persisted run — nothing is kept in the browser — and if the run is still going,
+   refreshing resumes on its own.
+8. Press **Stop simulation**. The badge becomes `Stopped`, refreshing ends, and no
+   further samples appear. Pressing Start again creates a *new* run and leaves the
+   previous one and its history untouched.
+
+The complete `OFF → ON → OFF` cycle takes roughly 10–15 real seconds with the
+documented defaults. Left running, the growbox warms again and the cycle repeats;
+each switch is one more command in recent activity.
+
+Running the bootstrap by hand, which is the same command the entrypoint runs:
+
+```bash
+docker compose run --rm api python -m ai_greenhouse.seed demo-init
+```
+
+If the growbox already carries a different control loop, `demo-init` reports the
+conflict and stops. A loop is immutable and nothing is edited or deleted to make
+the demonstration fit.
+
+### Limitations of the demonstration
+
+- `simple-climate-v2` is a verification model, not physics. Its response rates and
+  its `8 °C` fan cooling offset exist so that a closed control cycle is visible in
+  seconds; they are not a calibrated growbox, and no measurement here says anything
+  about real equipment.
+- There is one page and one growbox. No authentication, no facility selector, no
+  topology forms and no manual fan control: the fan is switched by the control loop
+  or not at all.
+- Live updates are one-second polling while a run is active. There is no WebSocket
+  and no server push.
+- Recent activity is composed in the browser from the run, its commands and the
+  latest samples. No event log is stored, so it is a view of those resources rather
+  than a record of its own.
+- The simulation runtime lives in the API process. Restarting the container marks
+  an interrupted run `failed`, which the dashboard then shows with its bounded
+  failure reason.
 
 ## Seed the demo growbox
 
@@ -103,8 +183,12 @@ Assignments on Main Climate:
 The seed is idempotent. Running the command again finds the records by `code`
 within their parent scope, creates no duplicates, and exits successfully. All
 writes use the same domain services as the HTTP API. The command emits
-structured JSON logs containing every created or found identifier; it does not
-run automatically when the API container starts.
+structured JSON logs containing every created or found identifier.
+
+`demo` creates the topology only. `demo-init` is this seed plus the `24–26 °C`
+control loop the browser demonstration needs, and it is the one the local Compose
+entrypoint runs before Uvicorn. Neither is a FastAPI startup hook, and an explicit
+container command runs neither.
 
 The same module carries the automation demonstration driver, which is described
 in its own walkthrough below:
@@ -940,9 +1024,9 @@ Rules worth knowing before calling it:
 
 ## Boundaries
 
-The seed deliberately creates a topology-only growbox — no simulation,
-automation, telemetry, or device fixtures — and the following are not part of
-the system:
+The `demo` seed creates a topology-only growbox and `demo-init` adds one control
+loop; neither creates a simulation run, telemetry, a command or a device fixture.
+The following are not part of the system:
 
 - no `Area` physical-space hierarchy;
 - no assignment history — removing a zone-point assignment removes only that
@@ -950,8 +1034,12 @@ the system:
 - no authentication or authorization;
 - no devices, channels, bindings, or physical addresses;
 - no public telemetry ingestion endpoint, and no device or edge infrastructure;
-- no UI, and no endpoint that creates a command: a command is a consequence of
-  accepted telemetry, never something a client asks for;
+- no frontend framework, build pipeline or design system: the dashboard is one
+  page of plain HTML, CSS and JavaScript served from this application;
+- no dashboard aggregate endpoint, no persisted event log and no WebSocket or
+  SSE: the page polls the existing resources while a run is active;
+- no endpoint that creates a command: a command is a consequence of accepted
+  telemetry, never something a client asks for;
 - no manual fan control, no delivery attempts, retries or expiry, and no
   separate execution record: only commands that were applied in full are
   stored;
@@ -1037,6 +1125,10 @@ docker compose down -v
 docker compose up --build
 ```
 
+That is also how the `0.1` demonstration is verified from a clean environment:
+after the rebuild, <http://localhost:8000/> serves a bootstrapped growbox with no
+run, no telemetry and no commands yet.
+
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to
@@ -1069,14 +1161,15 @@ repository secrets.
 
 ```text
 src/ai_greenhouse/
-├── api/                 # HTTP routes and dependencies
+├── api/                 # HTTP routes, dependencies and the dashboard page
+│   └── static/          # The one HTML page and its stylesheet and script
 ├── core/                # Settings, logging, shared value types and exceptions
 ├── topology/            # Site, Facility, ControlZone and zone point assignments
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
 ├── simulation/          # Deterministic climate runs and in-process runtime
 ├── control/             # Hysteresis loops, commands and the actuator boundary
-├── seed/                # Explicit demo growbox seed and automation driver
+├── seed/                # Explicit demo seed, 0.1 bootstrap and automation driver
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```
