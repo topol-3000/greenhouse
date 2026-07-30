@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Basil Growbox — AI Greenhouse</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
+  </head>
+  <body>
+    <!--
+      One page, one growbox. Every value below is filled from the public API by
+      dashboard.js; nothing here is rendered by the server, so a reload starts
+      from persisted state rather than from anything the browser kept.
+    -->
+    <main class="dashboard" data-phase="loading">
+      <header class="dashboard__header">
+        <h1 class="dashboard__title" data-field="facility-name">Loading…</h1>
+        <p class="dashboard__subtitle">
+          Simulated demonstration growbox — the climate model is synthetic and not
+          physically calibrated.
+        </p>
+        <p class="badge" data-field="run-status">Loading…</p>
+      </header>
+
+      <p class="notice notice--loading" data-region="loading" role="status">
+        Reading the growbox…
+      </p>
+
+      <div class="notice notice--error" data-region="error" role="alert" hidden>
+        <span data-field="error-message">The API could not be reached.</span>
+        <button type="button" data-action="retry">Retry</button>
+      </div>
+
+      <section class="readings" aria-label="Current readings">
+        <article class="reading">
+          <h2 class="reading__label">Temperature</h2>
+          <p class="reading__value" data-field="temperature">No data</p>
+        </article>
+        <article class="reading">
+          <h2 class="reading__label">Humidity</h2>
+          <p class="reading__value" data-field="humidity">No data</p>
+        </article>
+        <article class="reading">
+          <h2 class="reading__label">Fan</h2>
+          <p class="reading__value" data-field="fan">No data</p>
+        </article>
+      </section>
+
+      <section class="chart" aria-label="Recent temperature">
+        <h2 class="chart__label">Recent temperature</h2>
+        <!--
+          A hand-drawn SVG rather than a chart library: one polyline over a fixed
+          viewBox is the whole requirement, and it scales without a dependency.
+        -->
+        <svg
+          class="chart__canvas"
+          data-field="chart"
+          viewBox="0 0 320 120"
+          preserveAspectRatio="none"
+          role="img"
+          aria-describedby="chart-summary"
+        >
+          <polyline class="chart__line" data-field="chart-line" points="" />
+        </svg>
+        <p class="chart__summary" id="chart-summary" data-field="chart-summary">
+          No temperature history yet.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="/static/dashboard.js"></script>
+  </body>
+</html>
