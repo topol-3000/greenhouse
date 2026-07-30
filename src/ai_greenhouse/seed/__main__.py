@@ -1,9 +1,16 @@
 """Command-line entry point for explicitly invoked AI Greenhouse seeds and demos.
 
-Two commands, both explicit and neither run at application startup:
+Three commands. None of them is an application startup hook: the local Compose
+entrypoint invokes ``demo-init`` as a command of its own, before Uvicorn, and an
+explicit container command such as ``pytest`` runs neither it nor anything else
+here.
 
 ``demo``
     Creates or finds the basil growbox topology.
+``demo-init``
+    The topology plus the one ``24–26 °C`` control loop the ``0.1`` browser
+    demonstration needs. Idempotent, and it refuses a conflicting existing
+    configuration instead of changing it.
 ``automation-demo``
     Offers the documented three temperatures to the automation flow. It needs
     the topology above and a control loop configured through the API.
@@ -25,6 +32,7 @@ from ai_greenhouse.infrastructure.database.engine import (
 )
 from ai_greenhouse.seed.automation import drive_automation_demo
 from ai_greenhouse.seed.demo import seed_demo
+from ai_greenhouse.seed.demo_init import initialize_demo
 
 logger: BoundLogger = structlog.get_logger(__name__)
 
@@ -32,6 +40,7 @@ SeedOperation = Callable[[AsyncSession], Awaitable[object]]
 
 OPERATIONS: dict[str, SeedOperation] = {
     "demo": seed_demo,
+    "demo-init": initialize_demo,
     "automation-demo": drive_automation_demo,
 }
 """The commands this module accepts, and what each one runs in one transaction."""
@@ -87,6 +96,24 @@ async def run_demo_command(
         Zero on success and one on failure.
     """
     return await run_seed_command(seed_demo, settings, session_factory=session_factory)
+
+
+async def run_demo_init_command(
+    settings: Settings,
+    *,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> int:
+    """Prepare the ready-to-use browser demonstration.
+
+    Args:
+        settings: Application settings containing the database URL.
+        session_factory: Optional injected factory used by integration tests.
+
+    Returns:
+        Zero on success and one on failure, including a growbox whose existing
+        control loop conflicts with the one the demonstration needs.
+    """
+    return await run_seed_command(initialize_demo, settings, session_factory=session_factory)
 
 
 async def run_automation_demo_command(

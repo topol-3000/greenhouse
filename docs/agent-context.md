@@ -15,22 +15,28 @@ the target and are opened only when the current task needs them.
   enum storage helpers, and base domain exceptions.
 - `infrastructure/database` owns the async engine, declarative metadata,
   request sessions, health checks, and database startup waiting.
-- `api` owns HTTP routing, dependencies, pagination, and translation of domain
-  errors into the common response envelope.
+- `api` owns HTTP routing, dependencies, pagination, translation of domain errors
+  into the common response envelope, and delivery of the one same-origin
+  dashboard page from `api/static/`. Domain endpoints stay under `/api/v1`.
 - `topology` owns `Site`, `Facility`, `ControlZone`, and zone-point
   assignments.
 - `points` owns stable logical `Point` identities and `PointCurrentState`.
 - `telemetry` owns append-only `TelemetrySample` persistence, the idempotent
   write boundary, current-state projection updates, and read-only history.
-- `simulation` owns `SimulationRun` persistence, the pure `simple-climate-v1`
-  model, and the single-process in-application runtime that drives runs.
+- `simulation` owns `SimulationRun` persistence, the pure frozen
+  `simple-climate-v1` model, the `simple-climate-v2` model whose temperature
+  target follows logical fan state, and the single-process in-application runtime
+  that drives runs. New runs are server-owned v2; execution dispatches on the
+  persisted `model_version`.
 - `control` owns the immutable `hysteresis-v1` `ControlLoop`, the pure policy,
   the idempotent applied `Command`, the loopback actuator boundary, and the
   source-independent ingestion path every in-process producer offers telemetry
   on.
-- `seed` creates the idempotent basil-growbox demo through domain services and
-  carries the controlled automation-demonstration driver. Both are explicit
-  commands and neither runs at startup.
+- `seed` creates the idempotent basil-growbox demo through domain services,
+  carries the `demo-init` bootstrap that adds the `24-26 °C` control loop, and
+  carries the controlled automation-demonstration driver. All three are explicit
+  commands; none is a FastAPI startup hook. The local Compose entrypoint invokes
+  `demo-init` after migrations and before Uvicorn.
 - Domain modules use `models.py`, `schemas.py`, `repository.py`, `service.py`,
   and `exceptions.py` when those layers are needed.
 - Routes handle HTTP only. Services enforce invariants and must not import
@@ -43,19 +49,16 @@ the target and are opened only when the current task needs them.
 ## Scope
 
 Implemented: the growbox topology with stable logical point IDs, append-only
-telemetry, the current-state projection, telemetry history, simulation runs, the
-deterministic climate model, the in-application runtime, hysteresis control-loop
-configuration, and the automation flow that turns an accepted temperature into
-an applied fan command.
+telemetry, the current-state projection, telemetry history, simulation runs, both
+deterministic climate models, the in-application runtime, hysteresis control-loop
+configuration, the automation flow that turns an accepted temperature into an
+applied fan command, the idempotent `demo-init` bootstrap, and one same-origin
+dashboard page that starts, observes and stops the demo run.
 
-Planned by the active scope and not implemented yet: a climate model whose
-temperature responds to logical fan state, and one same-origin dashboard page
-that starts, observes and stops the demo run. Treat both as absent until the
-code, migrations and tests show otherwise.
-
-Out of scope: devices, Edge/MQTT, authentication, a frontend framework,
-distributed workers, a generic public ingestion endpoint, and any endpoint that
-creates a command.
+Out of scope: devices, Edge/MQTT, authentication, a frontend framework or build
+pipeline, distributed workers, WebSocket/SSE, a persisted event log, a dashboard
+aggregate endpoint, manual fan control, a generic public ingestion endpoint, and
+any endpoint that creates a command.
 
 ## Invariants and development rules
 
@@ -73,7 +76,14 @@ creates a command.
   persisted only once applied, and it and both result samples are atomic; a
   failed application never rolls back the measurement that triggered it.
 - `fan_power` and `fan_running` are written only through the telemetry
-  boundary. `fan_running` is an output and never a policy input.
+  boundary. `fan_running` is an output and never a policy input, and never a
+  simulation-model input.
+- The simulator reads logical `fan_power` and never writes it. Automation gains
+  no simulation dependency: the direction is one-way, always.
+- `simple-climate-v1` is frozen. A persisted v1 run must keep producing what it
+  produced before; a change to the model arrives as a new version.
+- The dashboard is a client of the public API. It adds no endpoint, resolves the
+  demo growbox by stable code, and renders only persisted state.
 - Reuse constraints from `core/types.py`. Enum columns use `VARCHAR` plus a
   `CHECK` through `enum_column`, never native PostgreSQL enums.
 - Domain resources are archived rather than physically deleted.
