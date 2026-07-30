@@ -32,9 +32,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.control.actuator import ActuationRequest, Actuator, LoopbackActuator
-from ai_greenhouse.control.models import Command, ControlLoop
+from ai_greenhouse.control.models import Command, CommandState, ControlLoop
 from ai_greenhouse.control.policy import FanAction, evaluate_hysteresis
 from ai_greenhouse.control.repository import CommandRepository, ControlLoopRepository
+from ai_greenhouse.gateways.models import Gateway
+from ai_greenhouse.gateways.repository import GatewayRepository
 from ai_greenhouse.infrastructure.database.base import utc_now
 from ai_greenhouse.points.models import PointCurrentState
 from ai_greenhouse.points.repository import PointCurrentStateRepository
@@ -146,6 +148,7 @@ class AutomationService:
         self._loops: ControlLoopRepository = ControlLoopRepository(session)
         self._commands: CommandRepository = CommandRepository(session)
         self._states: PointCurrentStateRepository = PointCurrentStateRepository(session)
+        self._gateways: GatewayRepository = GatewayRepository(session)
         self._clock: Clock = clock
         self._actuator: Actuator = actuator or LoopbackActuator(TelemetryService(session))
 
@@ -188,17 +191,32 @@ class AutomationService:
             return None
 
         command_id: UUID = command_id_for(loop.id, record.id, action)
-        executed_at: datetime = self._clock()
-        request = ActuationRequest(
-            command_id=command_id,
-            control_point_id=loop.control_point_id,
-            status_point_id=loop.status_point_id,
-            desired_value=action is FanAction.TURN_ON,
-            executed_at=executed_at,
-            control_sample_id=result_sample_id(command_id, loop.control_point_id),
-            status_sample_id=result_sample_id(command_id, loop.status_point_id),
+        issued_at: datetime = self._clock()
+        desired_value = action is FanAction.TURN_ON
+        gateway: Gateway | None = await self._gateways.gateway_for_command_points(
+            loop.control_point_id,
+            loop.status_point_id,
         )
-        await self._actuator.apply(request)
+
+        executed_at: datetime | None = None
+        control_sample_id: UUID | None = None
+        status_sample_id: UUID | None = None
+        state = CommandState.PENDING
+        if gateway is None:
+            executed_at = issued_at
+            control_sample_id = result_sample_id(command_id, loop.control_point_id)
+            status_sample_id = result_sample_id(command_id, loop.status_point_id)
+            request = ActuationRequest(
+                command_id=command_id,
+                control_point_id=loop.control_point_id,
+                status_point_id=loop.status_point_id,
+                desired_value=desired_value,
+                executed_at=executed_at,
+                control_sample_id=control_sample_id,
+                status_sample_id=status_sample_id,
+            )
+            await self._actuator.apply(request)
+            state = CommandState.APPLIED
 
         command = Command(
             id=command_id,
@@ -206,10 +224,15 @@ class AutomationService:
             control_loop_id=loop.id,
             trigger_sample_id=record.id,
             target_point_id=loop.control_point_id,
-            desired_value=request.desired_value,
-            result_control_sample_id=request.control_sample_id,
-            result_status_sample_id=request.status_sample_id,
+            reported_point_id=loop.status_point_id,
+            gateway_id=None if gateway is None else gateway.id,
+            desired_value=desired_value,
+            state=state,
+            result_control_sample_id=control_sample_id,
+            result_status_sample_id=status_sample_id,
+            issued_at=issued_at,
             executed_at=executed_at,
+            acknowledged_at=executed_at,
         )
         self._commands.add(command)
         await self._commands.flush()

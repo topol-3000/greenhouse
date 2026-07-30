@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # added here.
 from ai_greenhouse.control import models as control_models  # noqa: F401
 from ai_greenhouse.core.config import get_settings
+from ai_greenhouse.edge import models as edge_models  # noqa: F401
+from ai_greenhouse.gateways import models as gateway_models  # noqa: F401
 from ai_greenhouse.infrastructure.database.metadata import metadata
 from ai_greenhouse.points import models as points_models  # noqa: F401
 from ai_greenhouse.simulation import models as simulation_models  # noqa: F401

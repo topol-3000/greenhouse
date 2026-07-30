@@ -17,6 +17,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ai_greenhouse.core.exceptions import DomainError
+from ai_greenhouse.edge.exceptions import EdgeContractError
+from ai_greenhouse.edge.schemas import CONTRACT_VERSION
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -83,7 +85,32 @@ async def handle_validation_error(
     Returns:
         A ``JSONResponse`` with HTTP 422 and ``error.code = "validation_error"``.
     """
-    failures: list[dict[str, Any]] = [
+    if request.url.path.startswith("/api/v1/edge/"):
+        failures: list[dict[str, Any]] = [
+            {
+                "location": [
+                    part for part in failure["loc"] if part not in {"body", "path", "query"}
+                ],
+                "message": failure["msg"][:500],
+            }
+            for failure in exc.errors()
+        ]
+        for failure in failures:
+            if not failure["location"]:
+                failure["location"] = ["request"]
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={
+                "contract_version": CONTRACT_VERSION,
+                "error": {
+                    "code": VALIDATION_ERROR_CODE,
+                    "message": "The request is invalid.",
+                    "details": failures,
+                },
+            },
+        )
+
+    failures = [
         {
             "location": [str(part) for part in failure["loc"]],
             "message": failure["msg"],
@@ -104,6 +131,27 @@ async def handle_validation_error(
             VALIDATION_ERROR_MESSAGE,
             {"errors": failures},
         ),
+    )
+
+
+async def handle_edge_contract_error(
+    request: Request,
+    exc: EdgeContractError,
+) -> JSONResponse:
+    """Return the closed v1 Edge error representation."""
+    logger.info(
+        "edge_contract_error",
+        error_code=exc.code,
+        http_status=exc.http_status,
+        method=request.method,
+        path=request.url.path,
+    )
+    return JSONResponse(
+        status_code=exc.http_status,
+        content={
+            "contract_version": CONTRACT_VERSION,
+            "error": {"code": exc.code, "message": exc.message},
+        },
     )
 
 
@@ -137,5 +185,6 @@ def register_exception_handlers(application: FastAPI) -> None:
         application: The FastAPI app to register handlers on.
     """
     application.add_exception_handler(DomainError, handle_domain_error)
+    application.add_exception_handler(EdgeContractError, handle_edge_contract_error)
     application.add_exception_handler(RequestValidationError, handle_validation_error)
     application.add_exception_handler(Exception, handle_unexpected_error)
