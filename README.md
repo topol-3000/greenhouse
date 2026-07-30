@@ -12,20 +12,123 @@ zone-point assignments, and a single-request facility configuration — plus
 append-only telemetry, current-state updates, telemetry history, deterministic
 climate simulation, persisted runs, a single-process runtime, and the first
 automation loop: an accepted temperature is evaluated by a hysteresis policy and
-turns a logical fan on or off through an idempotent command. Version `0.1` closes
-that loop visibly: one same-origin dashboard page starts the simulation, shows the
-fan switching on as the growbox warms past `26 °C` and off again as it cools below
-`24 °C`, and stops the run. The runtime is Python 3.14 with PostgreSQL 18.
-Authentication, devices, and a frontend framework are not included.
+turns a logical fan on or off through an idempotent command. Administrative
+clients can provision stable Edge gateway identities and logical-point
+authorization through HTTP, then use the Cloud ↔ Edge v1 data plane for
+telemetry and command delivery. Version `0.1` closes the in-process loop visibly:
+one same-origin dashboard page starts the simulation, shows the fan switching on
+as the growbox warms past `26 °C` and off again as it cools below `24 °C`, and
+stops the run. The runtime is Python 3.14 with PostgreSQL 18. Production
+authentication, devices, and a frontend framework are not included.
 
 ## Cloud ↔ Edge contracts
 
 The transport-neutral v1.0 telemetry and command contract is published under
 [`contracts/cloud-edge/v1/`](contracts/cloud-edge/v1/README.md). It contains
 standalone JSON Schemas, valid and invalid examples, idempotency and lifecycle
-semantics, error behavior, compatibility rules, and the minimal HTTP/JSON
-mapping planned for implementation in KAN-54. This repository does not expose
-those public ingestion or command-delivery endpoints yet.
+semantics, error behavior, compatibility rules, and the implemented HTTP/JSON
+mapping:
+
+```http
+POST /api/v1/edge/telemetry
+GET  /api/v1/edge/gateways/{gateway_id}/commands
+PUT  /api/v1/edge/gateways/{gateway_id}/commands/{command_id}/acknowledgement
+```
+
+These operations are the Edge data plane. Their closed v1 representations stay
+independent of the administrative provisioning API described next.
+
+## Gateway management-plane API
+
+An administrative provisioning client can configure the gateway-specific part
+of a clean cloud without importing cloud Python code, executing a seed, or
+accessing PostgreSQL:
+
+```http
+POST /api/v1/gateways
+GET  /api/v1/gateways/by-code/{code}
+GET  /api/v1/gateways/{gateway_id}
+GET  /api/v1/gateways/{gateway_id}/configuration
+GET  /api/v1/gateways/{gateway_id}/points
+POST /api/v1/gateways/{gateway_id}/points
+```
+
+Provision or resolve a gateway by its globally stable code:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/gateways \
+  -H 'content-type: application/json' \
+  -d '{"code":"north-gateway",
+       "site_id":"11111111-1111-1111-1111-111111111111"}'
+```
+
+The first equivalent request returns HTTP 201 and `"outcome": "created"`;
+retries return HTTP 200 and `"outcome": "existing"`. Both carry the same
+gateway resource and normalized functional configuration:
+
+```json
+{
+  "outcome": "created",
+  "gateway": {
+    "id": "22222222-2222-2222-2222-222222222222",
+    "code": "north-gateway",
+    "site_id": "11111111-1111-1111-1111-111111111111",
+    "status": "active",
+    "created_at": "2026-07-30T12:00:00Z",
+    "updated_at": "2026-07-30T12:00:00Z"
+  },
+  "configuration": {
+    "gateway_id": "22222222-2222-2222-2222-222222222222",
+    "code": "north-gateway",
+    "site_id": "11111111-1111-1111-1111-111111111111"
+  }
+}
+```
+
+`code` is the stable provisioning lookup key. `gateway.id` is the cloud-assigned
+operational UUID sent unchanged in telemetry envelopes and used in command poll
+and acknowledgement paths. The configuration representation deliberately omits
+timestamps and persistence details so clients can compare functional values.
+
+Reusing a code with a different `site_id`, or reusing an archived gateway,
+returns HTTP 409 with `error.code = "gateway_configuration_conflict"`. Its
+details name the conflicting gateway and code and include a `conflicts` list
+whose entries carry `field`, `expected`, and `actual`.
+
+Point authorization is additive: it never removes existing authorization.
+
+```bash
+curl -X POST \
+  http://localhost:8000/api/v1/gateways/22222222-2222-2222-2222-222222222222/points \
+  -H 'content-type: application/json' \
+  -d '{"point_ids":[
+        "33333333-3333-3333-3333-333333333333",
+        "44444444-4444-4444-4444-444444444444"
+      ]}'
+```
+
+Duplicate identifiers in one request are normalized to their first occurrence.
+The response reports each distinct point as `"authorized"` or
+`"already_authorized"`, and an equivalent retry creates no rows. A point must
+exist, be active, belong to the gateway's site, and not be authorized to another
+gateway. `GET .../points` returns the complete sorted authorization set.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Malformed body, code, UUID, or empty point list | 422 | `validation_error` |
+| Gateway does not exist by UUID or code | 404 | `gateway_not_found` |
+| Site does not exist | 404 | `site_not_found` |
+| Logical point does not exist | 404 | `point_not_found` |
+| Stable code has incompatible functional configuration | 409 | `gateway_configuration_conflict` |
+| Gateway is archived | 409 | `gateway_inactive` |
+| Site is archived | 409 | `gateway_site_inactive` |
+| Point is archived, belongs to another site, or has another gateway owner | 409 | `gateway_point_conflict` |
+
+These are administrative management-plane operations and are isolated under
+their own router/tag for a future administrative authorization policy. The
+application does not yet implement production authentication, users, RBAC, or
+multi-tenancy; deployments must not treat the current unauthenticated boundary
+as the final production security model.
 
 ## Prerequisites
 
@@ -1040,9 +1143,9 @@ The following are not part of the system:
 - no `Area` physical-space hierarchy;
 - no assignment history — removing a zone-point assignment removes only that
   current link;
-- no authentication or authorization;
+- no production authentication, users, RBAC or multi-tenancy;
 - no devices, channels, bindings, or physical addresses;
-- no public telemetry ingestion endpoint, and no device or edge infrastructure;
+- no device discovery, MQTT, offline queue or driver registry;
 - no frontend framework, build pipeline or design system: the dashboard is one
   page of plain HTML, CSS and JavaScript served from this application;
 - no dashboard aggregate endpoint, no persisted event log and no WebSocket or

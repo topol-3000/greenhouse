@@ -3,9 +3,10 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
+from ai_greenhouse.core.types import MAX_CODE_LENGTH
 from ai_greenhouse.infrastructure.database.base import (
     Base,
     StatusMixin,
@@ -16,10 +17,16 @@ from ai_greenhouse.infrastructure.database.base import (
 
 
 class Gateway(UUIDPrimaryKeyMixin, TimestampMixin, StatusMixin, Base):
-    """A stable cloud-assigned Edge gateway identity within one site."""
+    """A stable Edge gateway identity and its provisioning code within one site."""
 
     __tablename__ = "gateways"
 
+    code: Mapped[str] = mapped_column(
+        String(MAX_CODE_LENGTH),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
     site_id: Mapped[UUID] = mapped_column(
         Uuid(),
         ForeignKey("sites.id", ondelete="RESTRICT"),
