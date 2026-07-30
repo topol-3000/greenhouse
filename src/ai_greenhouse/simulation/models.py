@@ -16,7 +16,20 @@ from ai_greenhouse.infrastructure.database.base import (
     enum_column,
 )
 
-MODEL_VERSION: str = "simple-climate-v1"
+MODEL_VERSION_V1: str = "simple-climate-v1"
+"""The frozen first model. Runs created before M4 carry it and keep its formula."""
+
+MODEL_VERSION_V2: str = "simple-climate-v2"
+"""The model whose temperature target follows the zone's logical fan state."""
+
+CURRENT_MODEL_VERSION: str = MODEL_VERSION_V2
+"""Version every new run is created with.
+
+Server-owned rather than requested: the parameter snapshot and the formula
+belong to the version, so a client that could name one would be choosing
+constants it does not send.
+"""
+
 MAX_MODEL_VERSION_LENGTH: int = 64
 MAX_FAILURE_REASON_LENGTH: int = 500
 RUNNING_ZONE_INDEX_NAME: str = "uq_simulation_runs_running_control_zone_id"
@@ -58,7 +71,7 @@ class SimulationRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     model_version: Mapped[str] = mapped_column(
         String(MAX_MODEL_VERSION_LENGTH),
         nullable=False,
-        default=MODEL_VERSION,
+        default=CURRENT_MODEL_VERSION,
     )
     speed_multiplier: Mapped[int] = mapped_column(Integer(), nullable=False)
     parameters: Mapped[dict[str, Any]] = mapped_column(
