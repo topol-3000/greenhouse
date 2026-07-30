@@ -13,7 +13,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
-from ai_greenhouse.control.models import ControlPolicyType
+from ai_greenhouse.control.models import CommandState, ControlPolicyType
 
 Threshold = Annotated[
     Decimal,
@@ -100,10 +100,16 @@ class CommandRead(BaseModel):
     control_loop_id: UUID
     trigger_sample_id: UUID
     target_point_id: UUID
+    reported_point_id: UUID
+    gateway_id: UUID | None
     desired_value: bool
-    result_control_sample_id: UUID
-    result_status_sample_id: UUID
-    executed_at: datetime
+    state: CommandState
+    result_control_sample_id: UUID | None
+    result_status_sample_id: UUID | None
+    issued_at: datetime
+    executed_at: datetime | None
+    acknowledged_at: datetime | None
+    rejection_reason: dict[str, str] | None
     created_at: datetime
 
 

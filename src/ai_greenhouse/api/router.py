@@ -11,6 +11,7 @@ from ai_greenhouse.api.routes.commands import router as commands_router
 from ai_greenhouse.api.routes.control_loops import router as control_loops_router
 from ai_greenhouse.api.routes.control_zones import router as control_zones_router
 from ai_greenhouse.api.routes.dashboard import router as dashboard_router
+from ai_greenhouse.api.routes.edge import router as edge_router
 from ai_greenhouse.api.routes.facilities import router as facilities_router
 from ai_greenhouse.api.routes.health import router as health_router
 from ai_greenhouse.api.routes.points import router as points_router
@@ -38,3 +39,4 @@ api_v1_router.include_router(telemetry_router)
 api_v1_router.include_router(simulation_runs_router)
 api_v1_router.include_router(control_loops_router)
 api_v1_router.include_router(commands_router)
+api_v1_router.include_router(edge_router)

@@ -1,19 +1,16 @@
 """ORM models of the control module.
 
-One rule governs both tables: a row, once written, is never changed. A loop is
-the configuration a decision was taken under and a command is a decision already
-applied, so neither carries an ``updated_at``, a ``status`` or an endpoint that
-edits it.
+Control loops are immutable configuration. Commands preserve immutable decision
+content while their delivery state may move once from ``pending`` to a terminal
+``applied`` or ``rejected`` acknowledgement.
 
 The policy is embedded rather than referenced. ``policy_type`` plus the two
 thresholds are the whole of ``hysteresis-v1``, and a separate policy table
 would add a second entity, a version and an assignment before anything needs to
 address a policy on its own.
 
-A command likewise carries no delivery machinery: no attempt counter, no
-expiry, no acknowledgement and no separate execution row. Only commands that
-were applied in full are stored, so a row is a fact rather than an intention,
-and there is nothing about its progress left to record.
+A command carries only the v1 pull-delivery lifecycle. There are no attempts,
+leases, expiry, push delivery, or broker concepts.
 """
 
 from datetime import datetime
@@ -22,6 +19,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Uuid, desc
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_greenhouse.infrastructure.database.base import (
@@ -70,6 +68,14 @@ class ControlPolicyType(StrEnum):
     """
 
     HYSTERESIS_V1 = "hysteresis-v1"
+
+
+class CommandState(StrEnum):
+    """Delivery lifecycle of a logical command."""
+
+    PENDING = "pending"
+    APPLIED = "applied"
+    REJECTED = "rejected"
 
 
 class ControlLoop(UUIDPrimaryKeyMixin, Base):
@@ -142,11 +148,12 @@ class ControlLoop(UUIDPrimaryKeyMixin, Base):
 
 
 class Command(Base):
-    """One fan state change that a loop decided on and an actuator applied.
+    """One logical fan state change decided by a control loop.
 
-    The row is written only once the actuator has reported back, so its
-    existence means the change took effect and both result samples are readable.
-    A failed application leaves nothing behind.
+    Gateway-owned points produce a pending command whose terminal acknowledgement
+    never manufactures telemetry. Points without a gateway preserve the
+    in-process loopback path, where the applied command and its two result
+    samples are atomic.
 
     The command names a logical point, never a device, an address or a
     protocol. That is what lets the loopback adapter of M3 be replaced by an
@@ -209,18 +216,46 @@ class Command(Base):
         ForeignKey("points.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    reported_point_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    gateway_id: Mapped[UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey("gateways.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     desired_value: Mapped[bool] = mapped_column(Boolean(), nullable=False)
-    result_control_sample_id: Mapped[UUID] = mapped_column(
-        Uuid(),
-        ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
+    state: Mapped[CommandState] = enum_column(
+        CommandState,
+        constraint_name="state",
         nullable=False,
     )
-    result_status_sample_id: Mapped[UUID] = mapped_column(
+    result_control_sample_id: Mapped[UUID | None] = mapped_column(
         Uuid(),
         ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    result_status_sample_id: Mapped[UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    executed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    rejection_reason: Mapped[dict[str, str] | None] = mapped_column(
+        JSONB(none_as_null=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

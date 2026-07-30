@@ -11,7 +11,8 @@ from sqlalchemy import Row, Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.api.pagination import PageParams, paginate
-from ai_greenhouse.control.models import Command, ControlLoop
+from ai_greenhouse.control.models import Command, CommandState, ControlLoop
+from ai_greenhouse.gateways.models import GatewayPoint
 from ai_greenhouse.points.models import Point
 from ai_greenhouse.topology.models import ControlZone, ZonePointAssignment
 
@@ -149,9 +150,8 @@ class ControlLoopRepository:
 class CommandRepository:
     """Queries over the ``commands`` table.
 
-    Like the telemetry stream it points into, the table is append-only: there is
-    no update and no delete. A stored command is a change that took effect, and
-    nothing that happens later makes it not have happened.
+    Decision content is append-only and there is no delete. The one permitted
+    update stores a pending command's terminal acknowledgement.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -189,6 +189,49 @@ class CommandRepository:
             The matching command, or ``None`` when no row exists.
         """
         return await self._session.get(Command, command_id)
+
+    async def get_for_gateway_update(
+        self,
+        gateway_id: UUID,
+        command_id: UUID,
+    ) -> Command | None:
+        """Lock a command only when it belongs to the named gateway."""
+        return await self._session.scalar(
+            select(Command)
+            .where(Command.id == command_id, Command.gateway_id == gateway_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    async def list_pending_for_gateway(
+        self,
+        gateway_id: UUID,
+        *,
+        limit: int,
+    ) -> list[Command]:
+        """Return pending commands whose target and report points remain authorized."""
+        target = GatewayPoint.__table__.alias("target_gateway_point")
+        reported = GatewayPoint.__table__.alias("reported_gateway_point")
+        statement = (
+            select(Command)
+            .join(
+                target,
+                (target.c.gateway_id == gateway_id)
+                & (target.c.point_id == Command.target_point_id),
+            )
+            .join(
+                reported,
+                (reported.c.gateway_id == gateway_id)
+                & (reported.c.point_id == Command.reported_point_id),
+            )
+            .where(
+                Command.gateway_id == gateway_id,
+                Command.state == CommandState.PENDING,
+            )
+            .order_by(Command.issued_at.asc(), Command.id.asc())
+            .limit(limit)
+        )
+        return list(await self._session.scalars(statement))
 
     async def list_history(
         self,

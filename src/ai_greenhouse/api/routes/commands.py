@@ -1,4 +1,4 @@
-"""Read-only HTTP access to the commands automation has applied.
+"""Read-only HTTP access to command history.
 
 There is deliberately no ``POST``. A command is what accepted telemetry led to,
 so offering a client a way to create one would put a second author on the fan
@@ -63,7 +63,7 @@ async def list_commands(
         ),
     ] = DEFAULT_COMMAND_LIMIT,
 ) -> CommandListRead:
-    """Return a bounded, deterministic newest-first window of applied commands.
+    """Return a bounded, deterministic newest-first window of commands.
 
     Args:
         service: The command service for this request.
@@ -84,7 +84,7 @@ async def list_commands(
 
 @router.get("/{command_id}", response_model=CommandRead)
 async def get_command(command_id: UUID, service: CommandServiceDep) -> CommandRead:
-    """Read one applied command and the identifiers its chain is followed by.
+    """Read one command and the identifiers its chain is followed by.
 
     Args:
         command_id: The command to read.

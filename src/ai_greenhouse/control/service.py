@@ -259,7 +259,7 @@ class ControlLoopService:
 
 
 class CommandService:
-    """Reads the commands automation has applied.
+    """Reads the complete command history.
 
     Read-only on purpose. Nothing creates a command through this service, and
     there is no endpoint that would: a command is a consequence of accepted
