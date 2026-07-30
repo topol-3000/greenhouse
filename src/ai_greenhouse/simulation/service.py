@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.api.pagination import PageParams
+from ai_greenhouse.control.automation import TelemetryIngestionService
 from ai_greenhouse.infrastructure.database.base import StatusEnum
 from ai_greenhouse.points.exceptions import PointStateNotFoundError
 from ai_greenhouse.points.models import DataQuality, Point, PointCurrentState, PointDataType
@@ -27,7 +28,6 @@ from ai_greenhouse.simulation.schemas import (
     SimulationRunCreate,
 )
 from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord
-from ai_greenhouse.telemetry.service import TelemetryService
 from ai_greenhouse.topology.models import ZonePointRole, ZoneType
 
 NUMERIC_DATA_TYPES: frozenset[PointDataType] = frozenset(
@@ -48,7 +48,7 @@ class SimulationRunService:
         self._session: AsyncSession = session
         self._repository = SimulationRunRepository(session)
         self._states = PointCurrentStateRepository(session)
-        self._telemetry = TelemetryService(session)
+        self._ingestion = TelemetryIngestionService(session)
 
     async def create_run(self, payload: SimulationRunCreate) -> SimulationRun:
         """Create a validated run in ``created`` state."""
@@ -270,13 +270,19 @@ class SimulationRunService:
         observed_at: datetime,
         received_at: datetime,
     ) -> None:
-        """Record both model outputs before advancing persisted progress."""
+        """Record both model outputs before advancing persisted progress.
+
+        The samples go through the shared ingestion path rather than straight to
+        the telemetry boundary, so a simulated temperature drives automation on
+        exactly the terms a real one would. The simulator itself knows nothing
+        about that: it offers a measurement and is told nothing back.
+        """
         values = (
             (temperature, self._value_for_point(temperature, state.temperature)),
             (humidity, self._value_for_point(humidity, state.humidity)),
         )
         for point, value in values:
-            await self._telemetry.record_sample(
+            await self._ingestion.ingest(
                 TelemetrySampleRecord(
                     id=simulation_sample_id(run.id, run.step_index, point.id),
                     point_id=point.id,

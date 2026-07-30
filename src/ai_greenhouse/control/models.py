@@ -1,14 +1,19 @@
 """ORM models of the control module.
 
-One rule governs the ``control_loops`` table: a row, once written, is never
-changed. A loop is the configuration a decision was taken under, and a command
-already applied refers back to it, so there is no ``updated_at``, no
-``status`` and no endpoint that edits or removes a row.
+One rule governs both tables: a row, once written, is never changed. A loop is
+the configuration a decision was taken under and a command is a decision already
+applied, so neither carries an ``updated_at``, a ``status`` or an endpoint that
+edits it.
 
 The policy is embedded rather than referenced. ``policy_type`` plus the two
 thresholds are the whole of ``hysteresis-v1``, and a separate policy table
 would add a second entity, a version and an assignment before anything needs to
 address a policy on its own.
+
+A command likewise carries no delivery machinery: no attempt counter, no
+expiry, no acknowledgement and no separate execution row. Only commands that
+were applied in full are stored, so a row is a fact rather than an intention,
+and there is nothing about its progress left to record.
 """
 
 from datetime import datetime
@@ -16,7 +21,7 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_greenhouse.infrastructure.database.base import (
@@ -25,6 +30,14 @@ from ai_greenhouse.infrastructure.database.base import (
     enum_column,
     utc_now,
 )
+
+MAX_IDEMPOTENCY_KEY_LENGTH: int = 200
+"""Bound on the derived key.
+
+``hysteresis-v1``, two UUIDs and a decision come to 91 characters. The column
+is bounded rather than unbounded because it is unique and therefore indexed,
+and an unbounded unique text column is a size nothing controls.
+"""
 
 ZONE_LOOP_CONSTRAINT_NAME: str = "uq_control_loops_control_zone_id"
 """Unique constraint naming the one rule the table enforces on its own.
@@ -59,7 +72,8 @@ class ControlLoop(UUIDPrimaryKeyMixin, Base):
         control_zone_id: The climate zone the loop automates. Unique, because
             M3 allows one loop per zone.
         measurement_point_id: Numeric ``air_temperature`` point whose accepted
-            samples trigger evaluation.
+            samples trigger evaluation. Indexed: automation looks the loop up by
+            this column for every sample that becomes a current state.
         control_point_id: Boolean ``fan_power`` point the command is addressed
             to.
         status_point_id: Boolean ``fan_running`` point the adapter reports back
@@ -84,6 +98,7 @@ class ControlLoop(UUIDPrimaryKeyMixin, Base):
         Uuid(),
         ForeignKey("points.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
     control_point_id: Mapped[UUID] = mapped_column(
         Uuid(),
@@ -112,3 +127,85 @@ class ControlLoop(UUIDPrimaryKeyMixin, Base):
     def __repr__(self) -> str:
         """Return a debug-friendly representation without the full row."""
         return f"ControlLoop(id={self.id!r}, control_zone_id={self.control_zone_id!r})"
+
+
+class Command(Base):
+    """One fan state change that a loop decided on and an actuator applied.
+
+    The row is written only once the actuator has reported back, so its
+    existence means the change took effect and both result samples are readable.
+    A failed application leaves nothing behind.
+
+    The command names a logical point, never a device, an address or a
+    protocol. That is what lets the loopback adapter of M3 be replaced by an
+    Edge adapter without this table changing.
+
+    The primary key is derived rather than generated, from the same inputs as
+    :attr:`idempotency_key`. Re-processing one trigger therefore rebuilds the
+    same identifier — and, through it, the same two result-sample identifiers —
+    so a replay collides with the row it would duplicate instead of writing a
+    second set of samples beside it.
+
+    Attributes:
+        id: Primary key, derived from the loop, the trigger and the decision.
+        idempotency_key: The decision in one stable string. Unique, and the
+            whole of what keeps two concurrent evaluations of one sample from
+            both acting.
+        control_loop_id: The loop whose thresholds produced the decision.
+        trigger_sample_id: The temperature sample that caused it. ``ON DELETE
+            RESTRICT``, like every other reference into the append-only stream.
+        target_point_id: The ``fan_power`` point the command was addressed to.
+        desired_value: The state asked for. ``True`` is on.
+        result_control_sample_id: The sample recording ``desired_value`` on the
+            control point.
+        result_status_sample_id: The sample recording the value the actuator
+            reported back on the status point.
+        executed_at: Instant the actuator applied the command, and the
+            ``observed_at`` of both result samples.
+        created_at: Instant the row was written.
+    """
+
+    __tablename__ = "commands"
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(MAX_IDEMPOTENCY_KEY_LENGTH),
+        nullable=False,
+        unique=True,
+    )
+    control_loop_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("control_loops.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    trigger_sample_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    target_point_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    desired_value: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    result_control_sample_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    result_status_sample_id: Mapped[UUID] = mapped_column(
+        Uuid(),
+        ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    def __repr__(self) -> str:
+        """Return a debug-friendly representation without the full row."""
+        return f"Command(id={self.id!r}, idempotency_key={self.idempotency_key!r})"

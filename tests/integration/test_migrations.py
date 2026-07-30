@@ -42,6 +42,7 @@ EXPECTED_TABLES: set[str] = {
     "telemetry_samples",
     "simulation_runs",
     "control_loops",
+    "commands",
 }
 """Every table the migrations create, all of which ``downgrade`` must remove."""
 
