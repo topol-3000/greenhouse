@@ -71,12 +71,17 @@ AUTOMATION_POINTS: tuple[tuple[str, dict[str, Any]], ...] = (
         },
     ),
 )
-"""The three points a ``hysteresis-v1`` loop binds, with their zone roles.
+"""The three points a ``hysteresis-v1`` loop binds, with their zone roles."""
 
-Deliberately the same codes, kinds and metrics the demo seed creates: a loop
-that could only be configured against test-only points would prove nothing
-about the growbox the milestone demonstrates.
-"""
+HUMIDITY_POINT: dict[str, Any] = {
+    "code": "air_humidity",
+    "name": "Air Humidity",
+    "point_kind": "measurement",
+    "metric_type": "air_humidity",
+    "data_type": "float",
+    "unit": "%",
+}
+"""The secondary measurement a climate zone carries but no loop reads."""
 
 
 def assignments_url(zone_id: str) -> str:
@@ -320,6 +325,41 @@ async def create_automation_growbox(
         await create_assignment(http_client, control_zone["id"], point["id"], role)
         points[point["code"]] = point
     return AutomationGrowbox(site, facility, control_zone, points)
+
+
+async def create_climate_growbox(
+    http_client: httpx.AsyncClient,
+    **overrides: Any,
+) -> AutomationGrowbox:
+    """Build the four-point climate growbox an operational reader shows.
+
+    The automation growbox plus the secondary humidity measurement: the loop
+    ignores it, and the dashboard renders it. Nothing here is cloud-owned
+    demonstration data — it is provisioned through the public API exactly as an
+    external client provisions its own installation.
+
+    Args:
+        http_client: The client under test.
+        **overrides: Fields replacing the defaults of the *site* body.
+
+    Returns:
+        The created topology and its four points, keyed by point code.
+    """
+    growbox = await create_automation_growbox(http_client, **overrides)
+    humidity = await create_point(
+        http_client,
+        growbox.site["id"],
+        facility_id=growbox.facility["id"],
+        **HUMIDITY_POINT,
+    )
+    await create_assignment(
+        http_client,
+        growbox.control_zone["id"],
+        humidity["id"],
+        "secondary_measurement",
+    )
+    growbox.points[humidity["code"]] = humidity
+    return growbox
 
 
 def control_loop_body(growbox: AutomationGrowbox, **overrides: Any) -> dict[str, Any]:

@@ -34,11 +34,12 @@ router: APIRouter = APIRouter(tags=["dashboard"])
 
 @router.get("/", include_in_schema=False)
 async def get_dashboard() -> FileResponse:
-    """Serve the Basil Growbox dashboard page.
+    """Serve the facility dashboard page.
 
     Returns:
         The single HTML document. It carries no data: the page discovers the
-        growbox through the same public endpoints any other client would use.
+        configured facility through the same public endpoints any other client
+        would use, and shows an explicit empty state while there is none.
     """
     return FileResponse(STATIC_DIRECTORY / INDEX_FILE, media_type="text/html")
 

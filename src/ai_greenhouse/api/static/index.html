@@ -3,39 +3,41 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Basil Growbox — AI Greenhouse</title>
+    <title>AI Greenhouse — Facility dashboard</title>
     <link rel="stylesheet" href="/static/dashboard.css" />
   </head>
   <body>
     <!--
-      One page, one growbox. Every value below is filled from the public API by
-      dashboard.js; nothing here is rendered by the server, so a reload starts
-      from persisted state rather than from anything the browser kept.
+      One page, one configured facility. Every value below is filled from the
+      public API by dashboard.js; nothing here is rendered by the server, so a
+      reload starts from persisted state rather than from anything the browser
+      kept. The page reads what producers wrote and offers no way to produce
+      anything itself.
     -->
     <main class="dashboard" data-phase="loading">
       <header class="dashboard__header">
         <h1 class="dashboard__title" data-field="facility-name">Loading…</h1>
         <p class="dashboard__subtitle">
-          Simulated demonstration growbox — the climate model is synthetic and not
-          physically calibrated.
+          Operational read view of the persisted cloud state. Measurements arrive
+          from external producers over the public Edge telemetry boundary.
         </p>
-        <p class="badge" data-field="run-status">Loading…</p>
       </header>
 
       <p class="notice notice--loading" data-region="loading" role="status">
-        Reading the growbox…
+        Reading the configured facility…
+      </p>
+
+      <p class="notice notice--empty" data-region="empty" role="status" hidden>
+        <span data-field="empty-message"
+          >No facility is configured yet. Provision one through the public API,
+          and this page will pick it up on its next refresh.</span
+        >
       </p>
 
       <div class="notice notice--error" data-region="error" role="alert" hidden>
         <span data-field="error-message">The API could not be reached.</span>
         <button type="button" data-action="retry">Retry</button>
       </div>
-
-      <section class="controls" aria-label="Simulation controls">
-        <button type="button" data-action="start" disabled>Start simulation</button>
-        <button type="button" data-action="stop" disabled>Stop simulation</button>
-        <span class="controls__hint" data-field="action-hint" role="status"></span>
-      </section>
 
       <section class="readings" aria-label="Current readings">
         <article class="reading">
@@ -76,9 +78,9 @@
       <section class="activity" aria-label="Recent activity">
         <h2 class="activity__label">Recent activity</h2>
         <!--
-          Composed in the browser from the run, its commands and the latest
-          samples. Nothing here is a stored event: the three resources it reads
-          are the record, and this list is a view of them.
+          Composed in the browser from the applied commands and the latest
+          samples. Nothing here is a stored event: the two resources it reads are
+          the record, and this list is a view of them.
         -->
         <ol class="activity__list" data-field="activity">
           <li class="activity__empty">Nothing has happened yet.</li>

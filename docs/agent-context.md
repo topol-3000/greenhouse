@@ -31,11 +31,10 @@ the target and are opened only when the current task needs them.
   authorization. Its management API is separate from the Edge data plane.
 - `edge` owns the backward-compatible Cloud ↔ Edge v1 HTTP adapter for telemetry
   submission, gateway-scoped command polling, and terminal acknowledgement.
-- `seed` creates the idempotent basil-growbox demo through domain services,
-  carries the `demo-init` bootstrap that adds the `24-26 °C` control loop, and
-  carries the controlled automation-demonstration driver. All three are explicit
-  commands; none is a FastAPI startup hook. The local Compose entrypoint invokes
-  `demo-init` after migrations and before Uvicorn.
+- The cloud owns no dataset. There is no seed package, no bootstrap command and
+  no startup hook that creates domain data: the container entrypoint waits for
+  the database, applies migrations and starts Uvicorn, so a clean deployment
+  serves empty domain tables until a client provisions through the public APIs.
 - Domain modules use `models.py`, `schemas.py`, `repository.py`, `service.py`,
   and `exceptions.py` when those layers are needed.
 - Routes handle HTTP only. Services enforce invariants and must not import
@@ -50,22 +49,25 @@ the target and are opened only when the current task needs them.
 Implemented: the growbox topology with stable logical point IDs, append-only
 telemetry, the current-state projection, telemetry history, hysteresis
 control-loop configuration, the automation flow that turns an accepted
-temperature into a fan command, the idempotent `demo-init` bootstrap, one
-same-origin dashboard page, administrative HTTP provisioning of stable Edge
-gateways and their authorized logical points, and the Cloud ↔ Edge v1 telemetry
-and command-delivery API.
+temperature into a fan command, one same-origin dashboard page that reads what
+producers wrote, administrative HTTP provisioning of stable Edge gateways and
+their authorized logical points, and the Cloud ↔ Edge v1 telemetry and
+command-delivery API.
 
-Out of scope: executable environment simulation, devices, MQTT, production
-authentication, users/RBAC/multi-tenancy, a frontend framework or build
-pipeline, distributed workers, WebSocket/SSE, a persisted event log, a dashboard
-aggregate endpoint, manual fan control, and any endpoint that creates a command.
+Out of scope: executable environment simulation, cloud-owned demo or seed data,
+devices, MQTT, production authentication, users/RBAC/multi-tenancy, a frontend
+framework or build pipeline, distributed workers, WebSocket/SSE, a persisted
+event log, a dashboard aggregate endpoint, manual fan control, and any endpoint
+that creates a command.
 
 Executable environment simulation belongs to the independent
 `greenhouse-simulation-lab` repository: environment models, simulated time and
 ticks, virtual sensors and actuators, the Basil Growbox scenario, virtual Edge
-Gateway behaviour and scenario lifecycle. It reaches the cloud only as an
+Gateway behaviour and scenario lifecycle. It provisions its own topology and
+gateway through the public HTTP APIs and otherwise reaches the cloud only as an
 ordinary client of the public Cloud ↔ Edge v1 contract. The cloud runs no
-simulator, holds no `SimulationRun`, and exposes no simulation lifecycle API.
+simulator, holds no `SimulationRun`, exposes no simulation lifecycle API, and
+creates no Basil Growbox of its own.
 
 ## Invariants and development rules
 
@@ -86,8 +88,9 @@ simulator, holds no `SimulationRun`, and exposes no simulation lifecycle API.
   failed application never rolls back the measurement that triggered it.
 - `fan_power` and `fan_running` are written only through the telemetry
   boundary. `fan_running` is an output and never a policy input.
-- The dashboard is a client of the public API. It adds no endpoint, resolves the
-  demo growbox by stable code, and renders only persisted state.
+- The dashboard is a client of the public API. It adds no endpoint, takes the
+  facility that is configured, renders only persisted state, and offers no
+  lifecycle action: it is producer-independent and refreshes on a bounded poll.
 - Reuse constraints from `core/types.py`. Enum columns use `VARCHAR` plus a
   `CHECK` through `enum_column`, never native PostgreSQL enums.
 - Domain resources are archived rather than physically deleted.

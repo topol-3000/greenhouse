@@ -1,10 +1,16 @@
 """Delivery of the dashboard page and its two assets.
 
-These tests own one question: does the application serve the page the browser
-needs, from the same origin as the API and with nothing else exposed. What the
-page then *renders* is client-side behaviour and is not asserted here; the data
-it renders from is asserted in ``tests/integration/test_dashboard_demo.py``.
+These tests own two questions: does the application serve the page the browser
+needs, from the same origin as the API and with nothing else exposed, and does
+that page stay a read model of whatever a producer wrote. What the page then
+*renders* is client-side behaviour and is not asserted here; the data it renders
+from is asserted in ``tests/integration/test_dashboard_read_model.py``.
+
+The producer-independence assertions read the served assets rather than the
+files on disk, because what a browser receives is what can carry a control.
 """
+
+import re
 
 import httpx
 
@@ -56,3 +62,50 @@ async def test_the_page_and_the_api_share_one_origin_and_no_cors_headers(
     assert api.status_code == 200
     assert "access-control-allow-origin" not in page.headers
     assert "access-control-allow-origin" not in api.headers
+
+
+async def test_the_page_offers_no_simulation_lifecycle_control(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """Executable simulation is Simulation Lab's, so the page cannot start one.
+
+    Asserted on the delivered markup: a button the browser never receives is a
+    button nobody can press, and this fails whether a control comes back as
+    markup or as text describing the product as a simulator.
+    """
+    page = (await http_client.get("/")).text
+    lowered = page.lower()
+
+    assert "simulation" not in lowered
+    assert "simulated" not in lowered
+    assert 'data-field="run-status"' not in page
+    # Retry re-reads the API. It is the only action the page offers at all, so a
+    # Start, a Stop or anything else that acts on a producer fails here.
+    assert set(re.findall(r'data-action="(\w+)"', page)) == {"retry"}
+    assert page.count("<button") == 1
+
+
+async def test_the_script_only_reads_and_never_addresses_a_simulation_run(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """The client is a read model: every request it makes is a ``GET`` of a read API.
+
+    A lifecycle action would need a write, and a run-gated refresh would need the
+    run. Neither survives here, so a reintroduced Start button would have nothing
+    to call and a poll cannot be made conditional on a producer's state again.
+    """
+    script = (await http_client.get(SCRIPT_PATH)).text
+    lowered = script.lower()
+
+    assert "simulation" not in lowered
+    assert "/simulation-runs" not in script
+    assert "simulation_run" not in script
+    assert re.findall(r'method:\s*"(\w+)"', script) == ["GET"]
+    assert '"POST"' not in script
+    assert "fetch(" in script
+    assert script.count("fetch(") == 1
+    assert 'data-action="retry"' in script
+    # A command applied by an external gateway has no ``executed_at``, so a
+    # page that dated activity by that field alone would show the epoch for
+    # every command a real producer applied.
+    assert "acknowledged_at" in script

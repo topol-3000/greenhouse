@@ -24,6 +24,9 @@ COPY migrations ./migrations
 COPY contracts ./contracts
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint
 COPY tests ./tests
+# The suite runs inside this image and asserts that the deployment path starts
+# nothing but the server, so the Compose file it asserts about has to be here.
+COPY compose.yaml ./
 
 RUN chmod 0755 /usr/local/bin/entrypoint
 

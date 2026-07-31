@@ -42,8 +42,9 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
 | `integration/<module>/` | Domain invariants through the real endpoints, each by its **refusal**; endpoint-specific filters; what PostgreSQL enforces and the service cannot. | Field validation, the pagination envelope or the archive lifecycle a second time. |
 | `integration/telemetry/` | The one module with no endpoint of its own: its tests call the service on the `session` fixture, commit or roll back as `get_session` would, and assert what reached the database. | The state response shape or the point rules a second time. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, and a `downgrade base` that really empties it. | Table shapes that a domain test already asserts. |
-| `integration/test_demo_seed.py`, `test_topology_demo.py`, `test_automation_demo.py`, `test_dashboard_demo.py` | The seed is idempotent; each documented walkthrough works end to end in the documented order. | Any rule not visible from the scenario. |
-| `integration/test_zero_one_demo.py` | The `0.1` release scenario: `demo-init` is idempotent and refuses a conflicting loop, and one bootstrapped growbox driven through the public Cloud ↔ Edge endpoints closes `OFF → ON → OFF`. | Anything a focused test already owns — page delivery, the Edge error contract, acknowledgement conflicts. |
+| `integration/test_topology_demo.py`, `test_dashboard_read_model.py` | Each documented walkthrough works end to end in the documented order, and the endpoints one dashboard frame reads answer for an empty cloud, a configured facility and a measured one. | Any rule not visible from the scenario. |
+| `integration/test_clean_startup.py`, `unit/test_clean_bootstrap.py` | That the cloud creates no data: the lifespan leaves every domain table empty, the public reads answer anyway, and no package, entry point, entrypoint or Compose service runs a seed. | What the provisioning endpoints themselves enforce. |
+| `integration/test_external_control_cycle.py` | One growbox provisioned through the public APIs and driven through the public Cloud ↔ Edge endpoints closes `OFF → ON → OFF`. | Anything a focused test already owns — page delivery, the Edge error contract, acknowledgement conflicts. |
 
 ## Rules of thumb
 
@@ -67,7 +68,8 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
    column set*, so a field nobody thought to forbid still fails.
 6. **Build fixtures with `factories.py`.** A test that needs a growbox calls
    `create_growbox`; it does not paste four `POST`\ s. When a request body
-   changes, one file changes.
+   changes, one file changes. The factories only ever call the public API,
+   which is also the only way anything reaches a real deployment.
 7. **Name the test after the behaviour.** `test_a_point_of_another_site_is_refused`,
    not `test_assign_409_case_3`. If a name needs the word "and", it is probably
    two tests — or two assertions that belong in one.

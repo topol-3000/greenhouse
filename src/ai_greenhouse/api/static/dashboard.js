@@ -1,115 +1,106 @@
 /**
- * The Basil Growbox dashboard.
+ * The AI Greenhouse facility dashboard.
  *
  * This file is the whole client. It has no framework, no build step and no
  * dependency: it reads the same public endpoints any other client would use,
  * under the same origin that served the page, and writes what it read into the
  * markup already in index.html.
  *
- * Three rules shape it:
+ * Four rules shape it:
  *
- * 1. The server owns the truth. Nothing is remembered across a reload, the demo
- *    growbox is found by its stable codes rather than by an identifier compiled
- *    into the page, and every rendered value comes from a persisted resource.
- *    Recent activity is composed here from the run, its commands and the latest
- *    samples; it is a view of those three resources and not a fourth one.
- * 2. A failed read is a banner, not a blank page. The last values that were
- *    valid stay on screen, and the reader is offered a retry instead of an
- *    exception.
- * 3. One cycle at a time. A refresh is scheduled only once the previous one has
- *    finished, and only while the run is actually active, so polling cannot
- *    overlap itself and stops on its own when the run reaches a terminal state.
+ * 1. The server owns the truth. Nothing is remembered across a reload and every
+ *    rendered value comes from a persisted resource. Recent activity is composed
+ *    here from the applied commands and the latest samples; it is a view of those
+ *    two resources and not a third one.
+ * 2. The page is producer-independent. It knows nothing about who wrote the
+ *    telemetry it renders — an external gateway, a virtual installation or real
+ *    equipment — and it starts, stops and controls nothing.
+ * 3. A failed read is a banner, not a blank page. The last values that were valid
+ *    stay on screen, and the reader is offered a retry instead of an exception.
+ * 4. One cycle at a time, forever. A refresh is scheduled only once the previous
+ *    one has finished, so polling cannot overlap itself, and it keeps going
+ *    whatever the state of the data: there is no lifecycle signal to gate it on.
  */
 
 const API = "/api/v1";
 
-const DEMO_CODES = {
-  site: "home",
-  facility: "basil-growbox",
-  controlZone: "main-climate",
-};
-
+/**
+ * The point codes one climate reading each is rendered from.
+ *
+ * These are the shared metric codes the domain documents, not the identity of a
+ * particular facility: a point a facility does not define is simply not shown.
+ */
 const POINT_CODES = {
   temperature: "air_temperature",
   humidity: "air_humidity",
   fanRunning: "fan_running",
 };
 
-const RUN_STATUS_LABELS = {
-  created: "Created",
-  running: "Running",
-  stopped: "Stopped",
-  failed: "Failed",
-};
-
-const NOT_STARTED = "Not started";
 const NO_DATA = "No data";
 
 /**
- * The documented parameters of the demonstration run.
+ * What a command's delivery state adds to its activity entry.
  *
- * The model version is not here: it is server-owned, and the create request has
- * no field for it.
+ * An applied command needs no suffix — the fan really changed — while a command
+ * still on its way to a gateway, or one the gateway refused, is a different
+ * fact and says so.
  */
-const DEMO_RUN = {
-  speed_multiplier: 600,
-  initial_temperature: 22.0,
-  initial_humidity: 65.0,
-  ambient_temperature: 30.0,
-  ambient_humidity: 50.0,
+const COMMAND_STATE_SUFFIXES = {
+  applied: "",
+  pending: " — pending delivery",
+  rejected: " — rejected by the gateway",
 };
 
-/** Samples plotted by the chart. One minute of ticks at the demo's one-per-second rate. */
+/** Samples plotted by the chart. */
 const HISTORY_LIMIT = 60;
 
-/** Commands read for the activity list. Well above what one demo run produces. */
+/** Commands read for the activity list. */
 const COMMAND_LIMIT = 20;
 
 /** How many of the newest samples reach the activity list, and how long it gets. */
 const ACTIVITY_SAMPLE_LIMIT = 5;
 const ACTIVITY_LIMIT = 12;
 
-/** Gap between refreshes while a run is active. */
-const POLL_INTERVAL_MS = 1000;
+/**
+ * Gap between refreshes.
+ *
+ * A bounded periodic poll of the read APIs, and deliberately nothing more: no
+ * WebSocket, no SSE and no subscription. Five seconds is slow enough to be
+ * unremarkable for the API and fast enough that an external producer's
+ * measurement appears while the reader is still looking at the page.
+ */
+const POLL_INTERVAL_MS = 5000;
 
 /** Fixed viewBox of the inline SVG, in its own user units. */
 const CHART = { width: 320, height: 120, padding: 8 };
 
 const dashboard = document.querySelector(".dashboard");
 const errorRegion = document.querySelector('[data-region="error"]');
-const startButton = document.querySelector('[data-action="start"]');
-const stopButton = document.querySelector('[data-action="stop"]');
+const emptyRegion = document.querySelector('[data-region="empty"]');
 
 /**
- * Cached result of the topology discovery.
+ * The facility the last successful cycle resolved, while there is one.
  *
- * The growbox is found once and then reused: the codes resolve to the same
- * resources on every read, and re-listing the topology once a second would ask
- * four questions whose answers cannot have changed.
+ * Only the identity is cached: which facility this page shows does not change
+ * while it is open, but what is configured inside it can, because an external
+ * client is free to provision the rest of the topology after the page was
+ * opened. It is dropped again whenever a cycle fails, so a cloud that was empty
+ * a moment ago is looked at again on the next refresh without a reload.
  */
-let growbox = null;
-
-/** The run the last successful read saw, which is what Stop addresses. */
-let latestRun = null;
+let facility = null;
 
 /**
  * Tail of the serialised cycle queue, and how much is waiting on it.
  *
- * Every read and every action goes through it, so two cycles never overlap. A
- * queue rather than a rejected-while-busy flag, because dropping a Stop that
- * happened to land during a poll would look to the reader like a button that
- * does nothing.
+ * Every read goes through it, so two cycles never overlap.
  */
 let queue = Promise.resolve();
 let queued = 0;
 
-/** Whether Start or Stop is waiting for its response. */
-let actionInFlight = false;
-
 /** Handle of the pending scheduled refresh, when one is pending. */
 let pollTimer = null;
 
-/** A read or action that failed for a reason the reader can be told about safely. */
+/** A read that failed for a reason the reader can be told about safely. */
 class DashboardError extends Error {}
 
 /**
@@ -123,30 +114,25 @@ function field(name) {
 }
 
 /**
- * Send one request to the API and decode its body.
+ * Read one resource from the API and decode its body.
+ *
+ * Every request this page makes is a `GET`: the dashboard is a read model and
+ * writes nothing back.
  *
  * @param {string} path Path under the API root, starting with a slash.
- * @param {object} [options] Method and JSON body, when they are not a plain GET.
  * @returns {Promise<object>} The decoded body.
  * @throws {DashboardError} If the request fails or the response is not success.
  *     The message names the status and never the response body: a failure is
  *     reported to the reader, and internal detail is not part of the report.
  */
-async function request(path, options = {}) {
-  const method = options.method ?? "GET";
-  const init = {
-    method,
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  };
-  if (options.body !== undefined) {
-    init.headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(options.body);
-  }
-
+async function read(path) {
   let response;
   try {
-    response = await fetch(`${API}${path}`, init);
+    response = await fetch(`${API}${path}`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
   } catch {
     throw new DashboardError("The API could not be reached.");
   }
@@ -157,69 +143,60 @@ async function request(path, options = {}) {
 }
 
 /**
- * Find one resource of a collection by its stable code.
+ * Return the first member of a collection, or `null` when it is empty.
+ *
+ * The page shows one facility, and which one is a question the cloud answers by
+ * what is configured in it. No code is compiled into the page, so any facility a
+ * client provisions — Basil Growbox or anything else — is rendered the same way.
  *
  * @param {string} path Collection path under the API root.
- * @param {string} code Stable code to look for.
- * @param {string} label Human-readable name used if nothing matches.
- * @returns {Promise<object>} The matching resource.
- * @throws {DashboardError} If the collection holds no resource with that code.
+ * @returns {Promise<object|null>} The first item, or `null`.
  */
-async function findByCode(path, code, label) {
-  const page = await request(path);
-  const match = page.items.find((item) => item.code === code);
-  if (match === undefined) {
-    throw new DashboardError(`The demo ${label} "${code}" does not exist yet.`);
-  }
-  return match;
+async function firstOf(path) {
+  const page = await read(path);
+  return page.items.length > 0 ? page.items[0] : null;
 }
 
 /**
- * Resolve the demo growbox and the points the dashboard reads.
+ * Resolve the facility the page renders, or nothing while none is configured.
  *
- * @returns {Promise<object>} The facility, its climate zone and its points by code.
- * @throws {DashboardError} If any part of the demo topology is missing.
+ * @returns {Promise<object|null>} The facility, or `null` while the cloud holds
+ *     no configured facility yet.
  */
-async function discover() {
-  if (growbox !== null) {
-    return growbox;
+async function discoverFacility() {
+  if (facility !== null) {
+    return facility;
   }
-  const site = await findByCode("/sites", DEMO_CODES.site, "site");
-  const facility = await findByCode(
-    `/facilities?site_id=${site.id}`,
-    DEMO_CODES.facility,
-    "facility",
-  );
-  const controlZone = await findByCode(
-    `/control-zones?facility_id=${facility.id}`,
-    DEMO_CODES.controlZone,
-    "control zone",
-  );
-  const page = await request(`/points?facility_id=${facility.id}`);
+  const site = await firstOf("/sites");
+  if (site === null) {
+    return null;
+  }
+  facility = await firstOf(`/facilities?site_id=${site.id}`);
+  return facility;
+}
+
+/**
+ * Resolve what is currently configured inside the facility.
+ *
+ * Re-read on every cycle rather than cached: a point, a zone or a loop
+ * provisioned after the page was opened has to become visible without a reload,
+ * and the page cannot know when its producer finished provisioning.
+ *
+ * @param {object} found The facility this page renders.
+ * @returns {Promise<object>} The facility, its points by code and its loop.
+ */
+async function readConfiguration(found) {
+  const page = await read(`/points?facility_id=${found.id}`);
   const points = {};
   for (const point of page.items) {
     points[point.code] = point;
   }
-  growbox = { site, facility, controlZone, points, controlLoop: null };
-  return growbox;
-}
-
-/**
- * Resolve the zone's control loop, which the command history is addressed by.
- *
- * Unlike the topology, this is re-read until it is found: a loop configured
- * after the page was opened has to become visible without a reload.
- *
- * @param {object} context The discovered growbox.
- * @returns {Promise<object|null>} The loop, or `null` while the zone has none.
- */
-async function resolveControlLoop(context) {
-  if (context.controlLoop !== null) {
-    return context.controlLoop;
-  }
-  const page = await request(`/control-loops?control_zone_id=${context.controlZone.id}`);
-  context.controlLoop = page.items.length > 0 ? page.items[0] : null;
-  return context.controlLoop;
+  const controlZone = await firstOf(`/control-zones?facility_id=${found.id}`);
+  const controlLoop =
+    controlZone === null
+      ? null
+      : await firstOf(`/control-loops?control_zone_id=${controlZone.id}`);
+  return { facility: found, points, controlLoop };
 }
 
 /**
@@ -232,18 +209,18 @@ async function readState(point) {
   if (point === undefined) {
     return null;
   }
-  return request(`/points/${point.id}/state`);
+  return read(`/points/${point.id}/state`);
 }
 
 /**
  * Read everything one rendering needs.
  *
- * @param {object} context The discovered growbox.
+ * @param {object} context The facility and its current configuration.
  * @returns {Promise<object>} The snapshot the renderer consumes.
  */
 async function readSnapshot(context) {
   const temperaturePoint = context.points[POINT_CODES.temperature];
-  const controlLoop = await resolveControlLoop(context);
+  const controlLoop = context.controlLoop;
   const [temperature, humidity, fanRunning] = await Promise.all([
     readState(temperaturePoint),
     readState(context.points[POINT_CODES.humidity]),
@@ -252,14 +229,11 @@ async function readSnapshot(context) {
   const history =
     temperaturePoint === undefined
       ? { items: [] }
-      : await request(`/points/${temperaturePoint.id}/telemetry?limit=${HISTORY_LIMIT}`);
-  const runs = await request(
-    `/simulation-runs?control_zone_id=${context.controlZone.id}&limit=1`,
-  );
+      : await read(`/points/${temperaturePoint.id}/telemetry?limit=${HISTORY_LIMIT}`);
   const commands =
     controlLoop === null
       ? { items: [] }
-      : await request(`/commands?control_loop_id=${controlLoop.id}&limit=${COMMAND_LIMIT}`);
+      : await read(`/commands?control_loop_id=${controlLoop.id}&limit=${COMMAND_LIMIT}`);
   return {
     facility: context.facility,
     points: context.points,
@@ -268,7 +242,6 @@ async function readSnapshot(context) {
     fanRunning,
     history: history.items,
     commands: commands.items,
-    run: runs.items.length > 0 ? runs.items[0] : null,
   };
 }
 
@@ -290,10 +263,9 @@ function formatReading(state, point) {
 /**
  * Format the logical fan state.
  *
- * The value comes from the persisted `fan_running` projection, never from what
- * the page last asked for: the fan is switched by the control loop, and an
- * optimistic local guess would show a state nothing had reported. The dashboard
- * offers no way to change it either — manual override is out of scope.
+ * The value comes from the persisted `fan_running` projection reported by
+ * whatever is behind the gateway. The fan is switched by the control loop, and
+ * the dashboard offers no way to change it — manual override is out of scope.
  *
  * @param {object|null} state The `fan_running` current state.
  * @returns {string} `On`, `Off` or the no-data text.
@@ -350,58 +322,42 @@ function chartGeometry(samples) {
 }
 
 /**
- * Return the label and machine name of a run's lifecycle state.
+ * Return the instant one command is placed in the activity list by.
  *
- * @param {object|null} run The zone's latest persisted run.
- * @returns {{label: string, status: string, reason: string|null}} What to show.
+ * A command is timed by what actually happened to it. `executed_at` is written
+ * by an in-process actuator and stays empty for a command an external gateway
+ * applied, so the acknowledgement is what dates those; a command nobody has
+ * answered yet is dated by the decision that issued it, which is the only
+ * instant it has.
+ *
+ * @param {object} command The command as the API returned it.
+ * @returns {string} An ISO-8601 instant.
  */
-function formatRun(run) {
-  if (run === null) {
-    return { label: NOT_STARTED, status: "not_started", reason: null };
-  }
-  return {
-    label: RUN_STATUS_LABELS[run.status] ?? run.status,
-    status: run.status,
-    reason: run.status === "failed" ? run.failure_reason : null,
-  };
+function commandInstant(command) {
+  return command.executed_at ?? command.acknowledged_at ?? command.issued_at;
 }
 
 /**
- * Compose the recent-activity list from the three resources that record it.
+ * Compose the recent-activity list from the two resources that record it.
  *
- * Samples are placed by `received_at` rather than by `observed_at`. A run at
- * speed 600 observes half an hour of virtual time per real second, so ordering
- * by the measured instant would push every reading above the lifecycle and
- * command entries it actually happened between.
+ * Samples are placed by `received_at` rather than by `observed_at`: a producer
+ * states its own observation time, and a batch that arrived together would
+ * otherwise be scattered around the commands it actually happened between.
  *
- * A command exists only where the fan changed state, so evaluations that
- * changed nothing are absent here because they are absent from the record.
+ * A command exists only where the loop decided the fan should change, so
+ * evaluations that decided nothing are absent here because they are absent from
+ * the record.
  *
  * @param {object} snapshot The values read from the API.
  * @returns {Array<{at: string, text: string}>} Newest-first activity entries.
  */
 function buildActivity(snapshot) {
   const entries = [];
-  const run = snapshot.run;
-  if (run !== null) {
-    entries.push({ at: run.created_at, text: "Simulation run created" });
-    if (run.started_at !== null) {
-      entries.push({ at: run.started_at, text: "Simulation started" });
-    }
-    if (run.stopped_at !== null) {
-      entries.push({
-        at: run.stopped_at,
-        text:
-          run.status === "failed"
-            ? `Simulation failed — ${run.failure_reason ?? "reason not recorded"}`
-            : "Simulation stopped",
-      });
-    }
-  }
   for (const command of snapshot.commands) {
+    const action = command.desired_value === true ? "Fan switched on" : "Fan switched off";
     entries.push({
-      at: command.executed_at,
-      text: command.desired_value === true ? "Fan switched on" : "Fan switched off",
+      at: commandInstant(command),
+      text: `${action}${COMMAND_STATE_SUFFIXES[command.state] ?? ` — ${command.state}`}`,
     });
   }
   const unit = snapshot.points[POINT_CODES.temperature]?.unit ?? "";
@@ -444,17 +400,6 @@ function renderActivity(entries) {
 }
 
 /**
- * Enable exactly the actions the current state allows.
- *
- * @param {object|null} run The latest persisted run.
- */
-function updateControls(run) {
-  const status = run === null ? "not_started" : run.status;
-  startButton.disabled = actionInFlight || status === "running";
-  stopButton.disabled = actionInFlight || status !== "running";
-}
-
-/**
  * Write one snapshot into the page.
  *
  * @param {object} snapshot The values read from the API.
@@ -480,27 +425,38 @@ function render(snapshot) {
   fan.textContent = formatFan(snapshot.fanRunning);
   fan.dataset.quality = snapshot.fanRunning?.quality ?? "no_data";
 
-  const run = formatRun(snapshot.run);
-  const badge = field("run-status");
-  badge.textContent = run.reason === null ? run.label : `${run.label} — ${run.reason}`;
-  badge.dataset.status = run.status;
-
   const geometry = chartGeometry(snapshot.history);
   field("chart-line").setAttribute("points", geometry.points);
   field("chart-summary").textContent = geometry.summary;
 
   renderActivity(buildActivity(snapshot));
-  updateControls(snapshot.run);
 }
 
 /**
- * Show a failed read or action without discarding what is already on screen.
+ * Show that the cloud holds nothing to render yet.
+ *
+ * An empty cloud is a normal state and not a failure: the page says so plainly
+ * and keeps refreshing, because the facility it is waiting for is provisioned by
+ * a client it knows nothing about.
+ */
+function showEmpty() {
+  field("facility-name").textContent = "No facility configured";
+  emptyRegion.hidden = false;
+}
+
+/** Hide the empty-cloud notice once a facility exists. */
+function clearEmpty() {
+  emptyRegion.hidden = true;
+}
+
+/**
+ * Show a failed read without discarding what is already on screen.
  *
  * @param {unknown} error The failure to report.
  */
 function showError(error) {
   const message =
-    error instanceof DashboardError ? error.message : "The growbox could not be read.";
+    error instanceof DashboardError ? error.message : "The facility could not be read.";
   field("error-message").textContent = message;
   errorRegion.hidden = false;
 }
@@ -508,15 +464,6 @@ function showError(error) {
 /** Hide the error banner after a read that succeeded. */
 function clearError() {
   errorRegion.hidden = true;
-}
-
-/**
- * Show what the page is currently waiting for, or nothing.
- *
- * @param {string} text The hint to display.
- */
-function setHint(text) {
-  field("action-hint").textContent = text;
 }
 
 /** Cancel the pending refresh, if one is pending. */
@@ -565,37 +512,38 @@ function schedulePoll() {
 }
 
 /**
- * Read the growbox once, render what came back, and keep polling while it runs.
+ * Read the facility once and render what came back.
+ *
+ * The next refresh is scheduled however this one ended. There is no producer
+ * state to consult and no run to be finished, so the only reason to stop
+ * refreshing would be a signal the cloud does not have.
  *
  * @returns {Promise<void>}
  */
 async function readAndRender() {
   clearPoll();
   try {
-    const snapshot = await readSnapshot(await discover());
-    latestRun = snapshot.run;
-    render(snapshot);
+    const found = await discoverFacility();
+    if (found === null) {
+      showEmpty();
+    } else {
+      render(await readSnapshot(await readConfiguration(found)));
+      clearEmpty();
+    }
     clearError();
-    if (snapshot.run !== null && snapshot.run.status === "running") {
-      schedulePoll();
-    }
   } catch (error) {
-    // Discovery is retried from scratch: a growbox that did not exist yet may
-    // exist by the time the next cycle runs.
-    growbox = null;
+    // Discovery is retried from scratch: what could not be read now may be
+    // readable by the time the next cycle runs.
+    facility = null;
     showError(error);
-    // A failed read of a run that was running is transient until proven
-    // otherwise, so the page keeps trying instead of freezing until Retry.
-    if (latestRun !== null && latestRun.status === "running") {
-      schedulePoll();
-    }
   } finally {
     dashboard.dataset.phase = "ready";
+    schedulePoll();
   }
 }
 
 /**
- * Read the growbox as soon as the queue allows.
+ * Read the facility as soon as the queue allows.
  *
  * @returns {Promise<void>}
  */
@@ -603,77 +551,6 @@ async function refresh() {
   return enqueue(readAndRender);
 }
 
-/**
- * Run one user action, then re-read the state it produced.
- *
- * The flag is what makes a second click a no-op rather than a second request;
- * the buttons are disabled for the duration as well, and neither is enough on
- * its own. The action itself waits for any read already in flight instead of
- * being dropped, and the poll is cancelled first so the reader is not shown a
- * frame from before their action.
- *
- * @param {string} hint What to tell the reader while the request is in flight.
- * @param {() => Promise<void>} action The requests to send.
- * @returns {Promise<void>}
- */
-async function act(hint, action) {
-  if (actionInFlight) {
-    return;
-  }
-  actionInFlight = true;
-  clearPoll();
-  setHint(hint);
-  updateControls(latestRun);
-  await enqueue(async () => {
-    try {
-      await action();
-      clearError();
-    } catch (error) {
-      showError(error);
-    }
-  });
-  actionInFlight = false;
-  setHint("");
-  await refresh();
-}
-
-/**
- * Create and start one demonstration run.
- *
- * A terminal run is left exactly as it is: this creates a new run rather than
- * reviving the previous one, which is why the history of an earlier run survives
- * pressing Start again.
- *
- * @returns {Promise<void>}
- */
-async function start() {
-  await act("Starting…", async () => {
-    const context = await discover();
-    const created = await request("/simulation-runs", {
-      method: "POST",
-      body: { control_zone_id: context.controlZone.id, ...DEMO_RUN },
-    });
-    await request(`/simulation-runs/${created.id}/start`, { method: "POST" });
-  });
-}
-
-/**
- * Stop the run the last read saw running.
- *
- * @returns {Promise<void>}
- */
-async function stop() {
-  const run = latestRun;
-  if (run === null) {
-    return;
-  }
-  await act("Stopping…", async () => {
-    await request(`/simulation-runs/${run.id}/stop`, { method: "POST" });
-  });
-}
-
-startButton.addEventListener("click", () => void start());
-stopButton.addEventListener("click", () => void stop());
 document.querySelector('[data-action="retry"]').addEventListener("click", () => {
   void refresh();
 });
