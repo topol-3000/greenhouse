@@ -15,7 +15,6 @@ from tests.integration.factories import (
     CONTROL_ZONES_URL,
     FACILITIES_URL,
     POINTS_URL,
-    SIMULATION_RUNS_URL,
     SITES_URL,
     create_growbox,
     create_point,
@@ -31,7 +30,6 @@ async def test_no_domain_entity_can_be_deleted(http_client: httpx.AsyncClient) -
         "facility": f"{FACILITIES_URL}/{facility['id']}",
         "control zone": f"{CONTROL_ZONES_URL}/{control_zone['id']}",
         "point": f"{POINTS_URL}/{point['id']}",
-        "simulation run": f"{SIMULATION_RUNS_URL}/{uuid4()}",
         "control loop": f"{CONTROL_LOOPS_URL}/{uuid4()}",
     }
 

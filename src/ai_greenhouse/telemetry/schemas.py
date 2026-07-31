@@ -1,11 +1,10 @@
 """The write contract of the telemetry module.
 
-This is not an HTTP body. There is no ingestion endpoint, and
-:class:`TelemetrySampleRecord` is the in-process argument
-:meth:`~ai_greenhouse.telemetry.service.TelemetryService.record_sample` accepts
-from the simulator today and from a device adapter later. It is a schema rather
-than a plain dataclass so that every producer is held to the same shape by the
-same validator, whether or not a request ever crosses the network.
+This is not an HTTP body. :class:`TelemetrySampleRecord` is the argument
+:meth:`~ai_greenhouse.telemetry.service.TelemetryService.record_sample` accepts,
+and the public Edge adapter builds one per accepted message. It is a schema
+rather than a plain dataclass so that every producer is held to the same shape
+by the same validator, whichever boundary the measurement arrived on.
 
 What the schema does *not* decide is whether ``value`` fits the point. That rule
 needs the point's ``data_type``, which only the service can read, so the service
@@ -53,17 +52,14 @@ class TelemetrySampleRecord(BaseModel):
 
     Attributes:
         id: Identifier chosen by the producer, and the whole of the idempotency
-            mechanism. A producer that can replay — the simulator derives it
-            from ``run_id``, ``step_index`` and ``point_id`` — must derive the
-            same id for the same measurement.
+            mechanism. A producer that can replay must derive the same id for
+            the same measurement.
         point_id: The point being measured.
         value: The measured value. Judged against the point's ``data_type`` by
             the service; ``null`` is not a value.
         observed_at: When the measurement was taken at the source.
         received_at: When this system took it in.
         quality: How far the value can be trusted.
-        simulation_run_id: The run that produced the sample, for a simulated
-            one.
         unit: Accepted so that a producer which states its own unit is not
             rejected, and then ignored. The unit stored on the sample is always
             the point's, because a producer that disagrees with the point about
@@ -79,7 +75,6 @@ class TelemetrySampleRecord(BaseModel):
     observed_at: AwareDatetime
     received_at: AwareDatetime
     quality: DataQuality
-    simulation_run_id: UUID | None = None
     unit: UnitStr | None = None
 
 

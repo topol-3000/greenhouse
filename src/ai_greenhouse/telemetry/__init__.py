@@ -9,17 +9,17 @@ stream rather than as a second source of truth.
 
 Everything enters through
 :meth:`~ai_greenhouse.telemetry.service.TelemetryService.record_sample`. The
-simulator calls it in process; a device ingestion adapter will call the same
-method later. No other code path — and no database trigger — writes
-``point_current_states``, which is what keeps the two properties this module
-exists for enforceable in one place:
+public Cloud ↔ Edge adapter reaches it through the shared ingestion path, and a
+later device adapter will reach the same method. No other code path — and no
+database trigger — writes ``point_current_states``, which is what keeps the two
+properties this module exists for enforceable in one place:
 
 * **Idempotency.** The sample id is chosen by the producer, so re-delivering a
   sample is a no-op instead of a duplicate row and a spurious revision.
 * **Out-of-order tolerance.** A sample that arrives late belongs in history,
   but must never roll the current state back to an older value.
 
-There is no ingestion endpoint. Telemetry arriving over HTTP is a device
-integration contract, and it is not designed here on the strength of one
-in-process producer.
+This module owns no endpoint of its own beyond read-only history. Telemetry
+arriving over HTTP is the Cloud ↔ Edge integration contract, and
+:mod:`ai_greenhouse.edge` is where that contract is designed.
 """

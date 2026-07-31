@@ -7,14 +7,13 @@ does not exist, the one declared by the points module, which
 
 Transactions: the service flushes so that constraint violations surface while
 they can still be translated into a domain failure. The final commit or rollback
-belongs to the caller — the ``get_session`` request dependency, or the
-simulation runtime's per-step session. The sample insert and the state update
-therefore happen inside one transaction: a step that fails after the insert
-takes the insert down with it, and leaves neither an orphan sample nor a state
-row updated halfway.
+belongs to the caller — the ``get_session`` request dependency. The sample
+insert and the state update therefore happen inside one transaction: a request
+that fails after the insert takes the insert down with it, and leaves neither an
+orphan sample nor a state row updated halfway.
 
 :meth:`TelemetryService.record_sample` is the *only* code path in the project
-that writes ``point_current_states``. Not a trigger, not the simulator, not a
+that writes ``point_current_states``. Not a trigger, not a
 repository reached from somewhere else. Both properties the projection has to
 hold — that a re-delivered sample changes nothing, and that a late sample does
 not roll the current value back — are decisions rather than constraints, and a
@@ -56,7 +55,7 @@ class TelemetryService:
         and both reads belong in the data-access layer.
 
         Args:
-            session: The session of the request or simulation step being served.
+            session: The session of the request being served.
         """
         self._samples: TelemetrySampleRepository = TelemetrySampleRepository(session)
         self._points: PointRepository = PointRepository(session)
@@ -110,9 +109,9 @@ class TelemetryService:
         transaction and there is no reason to hold it across the insert.
 
         The projection is replaced only by a *strictly* newer measurement. A
-        sample arriving late — a buffered gateway flushing, a step replayed out
-        of sequence — is still recorded in full, and the current value stays the
-        most recent one. ``revision`` therefore counts actual replacements, and
+        sample arriving late — a buffered gateway flushing, a message redelivered
+        out of sequence — is still recorded in full, and the current value stays
+        the most recent one. ``revision`` therefore counts actual replacements, and
         never decreases.
 
         The three ways this can end are reported rather than collapsed into
@@ -146,7 +145,6 @@ class TelemetryService:
         sample = TelemetrySample(
             id=record.id,
             point_id=point.id,
-            simulation_run_id=record.simulation_run_id,
             value=record.value,
             unit=point.unit,
             observed_at=record.observed_at,

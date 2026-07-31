@@ -8,8 +8,7 @@ Everything narrower — the decision itself, replay, out-of-order input, the
 actuator rollback — is asserted in ``unit/test_hysteresis_policy.py`` and
 ``integration/control/test_automation.py`` and is not repeated here. What this
 file adds is the part only the complete run can show: that the milestone's
-demonstration produces exactly two commands, that their chain is readable, and
-that it needs no simulation to happen.
+demonstration produces exactly two commands and that their chain is readable.
 """
 
 from typing import Any, cast
@@ -66,7 +65,6 @@ async def _state(http_client: httpx.AsyncClient, point_id: str) -> dict[str, Any
 async def test_the_documented_demo_turns_the_fan_on_holds_it_and_turns_it_off(
     app: FastAPI,
     http_client: httpx.AsyncClient,
-    connection: AsyncConnection,
     database_settings: Settings,
 ) -> None:
     """``27 → 25 → 23 °C`` yields exactly ON, no command, OFF — and nothing more."""
@@ -158,8 +156,6 @@ async def test_the_documented_demo_turns_the_fan_on_holds_it_and_turns_it_off(
     for code in ("fan_power", "fan_running"):
         state = await _state(http_client, points[code]["id"])
         assert state["value"] is False, code
-
-    assert await count_rows(connection, "simulation_runs") == 0
 
 
 async def test_re_running_the_demo_changes_nothing(

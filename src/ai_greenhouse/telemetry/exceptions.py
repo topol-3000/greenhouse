@@ -2,8 +2,8 @@
 
 These subclass the shared hierarchy in ``ai_greenhouse.core.exceptions`` and
 carry no HTTP knowledge. ``ai_greenhouse.api.errors`` maps them to responses for
-whichever endpoint eventually drives a producer; there is none today, because
-the simulator calls the service in process.
+whichever endpoint drives a producer; today that is the public Cloud ↔ Edge
+telemetry boundary, which translates them into its own closed error contract.
 
 A sample naming a point that does not exist is not redeclared here: the missing
 entity belongs to the points module, so
