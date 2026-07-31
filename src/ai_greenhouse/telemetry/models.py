@@ -50,22 +50,18 @@ class TelemetrySample(Base):
             producer safe.
         point_id: The point measured. ``ON DELETE RESTRICT``, so no point that
             has ever been measured can be removed out from under its history.
-        simulation_run_id: The simulation run that produced the sample, when one
-            did. Real measurements leave it ``NULL``. ``ON DELETE RESTRICT``
-            keeps a persisted run from disappearing underneath its samples.
         value: The measured value, as ``jsonb`` so one table serves numeric,
             boolean and textual points. Never ``NULL``: absence of data is the
             ``no_data`` state of a point, not a sample carrying nothing.
         unit: The point's unit as it stood at measurement time. Snapshotted
             rather than joined, so re-labelling a point later cannot silently
             reinterpret values already recorded under the old unit.
-        observed_at: When the value was measured at the source. Virtual time
-            for a simulated sample.
+        observed_at: When the value was measured at the source.
         received_at: When this system took the value in. Never defaulted from
             ``observed_at``, and never merged with it.
         quality: Trustworthiness of the value, from
-            :class:`~ai_greenhouse.points.models.DataQuality`. The simulator
-            records ``simulated``.
+            :class:`~ai_greenhouse.points.models.DataQuality`, as the producer
+            reported it.
     """
 
     __tablename__ = "telemetry_samples"
@@ -83,11 +79,6 @@ class TelemetrySample(Base):
         Uuid(),
         ForeignKey("points.id", ondelete="RESTRICT"),
         nullable=False,
-    )
-    simulation_run_id: Mapped[UUID | None] = mapped_column(
-        Uuid(),
-        ForeignKey("simulation_runs.id", ondelete="RESTRICT"),
-        nullable=True,
     )
     value: Mapped[Any] = mapped_column(JSONB(none_as_null=True), nullable=False)
     unit: Mapped[str | None] = mapped_column(String(MAX_UNIT_LENGTH), nullable=True)

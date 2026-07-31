@@ -28,8 +28,7 @@ class TelemetrySampleRepository:
         """Bind the repository to the request-scoped session.
 
         Args:
-            session: The session opened by ``get_session`` for this request, or
-                by the caller driving one simulation step.
+            session: The session opened by ``get_session`` for this request.
         """
         self._session: AsyncSession = session
 
@@ -91,7 +90,6 @@ class TelemetrySampleRepository:
         values: dict[str, Any] = {
             "id": sample.id,
             "point_id": sample.point_id,
-            "simulation_run_id": sample.simulation_run_id,
             "value": sample.value,
             "unit": sample.unit,
             "observed_at": sample.observed_at,

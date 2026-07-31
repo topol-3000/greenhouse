@@ -1,3 +1,5 @@
+import asyncio
+import json
 from collections.abc import Callable
 
 import httpx
@@ -51,8 +53,45 @@ def test_domain_routes_are_mounted_under_the_versioned_prefix(settings: Settings
 
     assert set(paths[f"{API_V1_PREFIX}/sites"]) == {"get", "post"}
     assert set(paths[f"{API_V1_PREFIX}/sites/{{site_id}}"]) == {"get", "patch"}
-    assert set(paths[f"{API_V1_PREFIX}/simulation-runs"]) == {"get", "post"}
-    assert set(paths[f"{API_V1_PREFIX}/simulation-runs/{{run_id}}"]) == {"get"}
+    assert set(paths[f"{API_V1_PREFIX}/control-loops"]) == {"get", "post"}
+    assert set(paths[f"{API_V1_PREFIX}/commands"]) == {"get"}
+
+
+def test_no_simulation_lifecycle_operation_is_exposed(settings: Settings) -> None:
+    """Executable simulation is Simulation Lab's; the cloud publishes none of it.
+
+    Asserted against the generated document rather than the route table, because
+    the contract a client reads is the document. A router mounted again, or a
+    schema pulled back in by a stray annotation, fails here.
+    """
+    document = create_app(settings).openapi()
+    schemas = document.get("components", {}).get("schemas", {})
+    rendered = json.dumps(document)
+
+    assert [path for path in document["paths"] if "simulation" in path] == []
+    assert [name for name in schemas if "Simulation" in name] == []
+    assert "simulation-runs" not in rendered
+    assert "SimulationRun" not in rendered
+    assert "simulation_run_id" not in rendered
+
+
+async def test_startup_registers_no_simulation_service_or_task(settings: Settings) -> None:
+    """The application owns an engine and a session factory, and no runtime.
+
+    The lifespan is entered and left for real: a background ticker or a recovery
+    pass reintroduced later would have to be registered somewhere on the app,
+    and this is the assertion that says there is nowhere for it to go.
+    """
+    app = create_app(settings)
+    before = set(asyncio.all_tasks())
+
+    async with app.router.lifespan_context(app):
+        during = {task for task in asyncio.all_tasks() if task not in before}
+        state = vars(app.state).get("_state", {})
+
+    assert not hasattr(app.state, "simulation_runtime")
+    assert set(state) == {"settings", "database_engine", "session_factory"}
+    assert during == set()
 
 
 def test_no_domain_route_escapes_the_versioned_prefix(settings: Settings) -> None:

@@ -23,15 +23,9 @@ the target and are opened only when the current task needs them.
 - `points` owns stable logical `Point` identities and `PointCurrentState`.
 - `telemetry` owns append-only `TelemetrySample` persistence, the idempotent
   write boundary, current-state projection updates, and read-only history.
-- `simulation` owns `SimulationRun` persistence, the pure frozen
-  `simple-climate-v1` model, the `simple-climate-v2` model whose temperature
-  target follows logical fan state, and the single-process in-application runtime
-  that drives runs. New runs are server-owned v2; execution dispatches on the
-  persisted `model_version`.
 - `control` owns the immutable `hysteresis-v1` `ControlLoop`, the pure policy,
-  the idempotent applied `Command`, the loopback actuator boundary, and the
-  source-independent ingestion path every in-process producer offers telemetry
-  on.
+  the idempotent `Command`, the loopback actuator boundary, and the
+  source-independent ingestion path every producer offers telemetry on.
 - `gateways` owns stable administrative gateway codes, operational gateway UUIDs,
   normalized site configuration, and additive one-owner logical-point
   authorization. Its management API is separate from the Edge data plane.
@@ -54,18 +48,24 @@ the target and are opened only when the current task needs them.
 ## Scope
 
 Implemented: the growbox topology with stable logical point IDs, append-only
-telemetry, the current-state projection, telemetry history, simulation runs, both
-deterministic climate models, the in-application runtime, hysteresis control-loop
-configuration, the automation flow that turns an accepted temperature into an
-applied fan command, the idempotent `demo-init` bootstrap, one same-origin
-dashboard page that starts, observes and stops the demo run, administrative HTTP
-provisioning of stable Edge gateways and their authorized logical points, and
-the Cloud ↔ Edge v1 telemetry and command-delivery API.
+telemetry, the current-state projection, telemetry history, hysteresis
+control-loop configuration, the automation flow that turns an accepted
+temperature into a fan command, the idempotent `demo-init` bootstrap, one
+same-origin dashboard page, administrative HTTP provisioning of stable Edge
+gateways and their authorized logical points, and the Cloud ↔ Edge v1 telemetry
+and command-delivery API.
 
-Out of scope: devices, MQTT, production authentication, users/RBAC/multi-tenancy,
-a frontend framework or build pipeline, distributed workers, WebSocket/SSE, a
-persisted event log, a dashboard aggregate endpoint, manual fan control, and any
-endpoint that creates a command.
+Out of scope: executable environment simulation, devices, MQTT, production
+authentication, users/RBAC/multi-tenancy, a frontend framework or build
+pipeline, distributed workers, WebSocket/SSE, a persisted event log, a dashboard
+aggregate endpoint, manual fan control, and any endpoint that creates a command.
+
+Executable environment simulation belongs to the independent
+`greenhouse-simulation-lab` repository: environment models, simulated time and
+ticks, virtual sensors and actuators, the Basil Growbox scenario, virtual Edge
+Gateway behaviour and scenario lifecycle. It reaches the cloud only as an
+ordinary client of the public Cloud ↔ Edge v1 contract. The cloud runs no
+simulator, holds no `SimulationRun`, and exposes no simulation lifecycle API.
 
 ## Invariants and development rules
 
@@ -77,18 +77,15 @@ endpoint that creates a command.
   state. `observed_at` and `received_at` have different meanings.
 - Telemetry values match `Point.data_type`; `bool` is not an integer. The unit
   is copied from the point as a snapshot.
-- In-process producers offer telemetry through `TelemetryIngestionService`, not
-  to `TelemetryService` directly, so automation runs whatever the source.
+- Producers offer telemetry through `TelemetryIngestionService`, not to
+  `TelemetryService` directly, so automation runs whatever the source. There is
+  one production ingestion path — the public Edge telemetry boundary — and no
+  second one is added for a particular producer.
 - Automation acts only on a sample that became the current state. A command is
   persisted only once applied, and it and both result samples are atomic; a
   failed application never rolls back the measurement that triggered it.
 - `fan_power` and `fan_running` are written only through the telemetry
-  boundary. `fan_running` is an output and never a policy input, and never a
-  simulation-model input.
-- The simulator reads logical `fan_power` and never writes it. Automation gains
-  no simulation dependency: the direction is one-way, always.
-- `simple-climate-v1` is frozen. A persisted v1 run must keep producing what it
-  produced before; a change to the model arrives as a new version.
+  boundary. `fan_running` is an output and never a policy input.
 - The dashboard is a client of the public API. It adds no endpoint, resolves the
   demo growbox by stable code, and renders only persisted state.
 - Reuse constraints from `core/types.py`. Enum columns use `VARCHAR` plus a

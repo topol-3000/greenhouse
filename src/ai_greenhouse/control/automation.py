@@ -2,24 +2,23 @@
 
 This module is where the milestone's one product claim lives — that the flow is
 the same whichever producer supplied the measurement. It therefore knows nothing
-about simulations, drivers or HTTP: it is handed a sample that the telemetry
+about gateways, drivers or HTTP: it is handed a sample that the telemetry
 boundary has already accepted as the point's current state, and everything it
 does from there depends on the loop configuration and the sample alone.
 
 Transactions
 ------------
-:class:`TelemetryIngestionService` is the seam every in-process producer calls.
-It records the sample first and applies the command afterwards, inside a
-savepoint, because the two have different failure rules:
+:class:`TelemetryIngestionService` is the seam every producer reaches the system
+through. It records the sample first and applies the command afterwards, inside
+a savepoint, because the two have different failure rules:
 
 * a measurement that was accepted is history, and stays recorded whatever
   happens next;
 * a command and its two result samples are one fact, and a failure anywhere in
   applying them must leave none of the three behind.
 
-The savepoint is what makes both true at once. The surrounding transaction —
-the request session, or the session of one simulation step — still owns the
-commit.
+The savepoint is what makes both true at once. The surrounding transaction — the
+request session — still owns the commit.
 """
 
 from collections.abc import Callable
@@ -260,9 +259,9 @@ class AutomationService:
 
 
 class TelemetryIngestionService:
-    """The one path an in-process producer offers a measurement on.
+    """The one path a measurement is offered on.
 
-    Producers call this instead of the telemetry service directly, which is what
+    Callers use this instead of the telemetry service directly, which is what
     makes "the same flow whichever source supplied the value" a property of the
     code rather than a claim about it. What it adds to the write boundary is the
     savepoint described in the module docstring, and nothing else: it decides no

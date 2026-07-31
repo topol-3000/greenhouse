@@ -2,7 +2,6 @@ import json
 from collections.abc import Callable
 from io import StringIO
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -71,8 +70,6 @@ async def test_health_failure_is_safe_and_logged_as_json(
     database_url = "postgresql+asyncpg://test_user:top-secret@test-db:5432/test"
     settings = build_settings(database_url, app_env="test")
     app = create_app(settings)
-    app.state.simulation_runtime.recover_interrupted_runs = AsyncMock(return_value=0)
-    app.state.simulation_runtime.shutdown = AsyncMock()
     log_output = StringIO()
     configure_logging(settings, stream=log_output)
 

@@ -15,7 +15,6 @@ from ai_greenhouse.edge import models as edge_models  # noqa: F401
 from ai_greenhouse.gateways import models as gateway_models  # noqa: F401
 from ai_greenhouse.infrastructure.database.metadata import metadata
 from ai_greenhouse.points import models as points_models  # noqa: F401
-from ai_greenhouse.simulation import models as simulation_models  # noqa: F401
 from ai_greenhouse.telemetry import models as telemetry_models  # noqa: F401
 from ai_greenhouse.topology import models as topology_models  # noqa: F401
 
