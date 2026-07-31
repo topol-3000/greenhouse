@@ -92,6 +92,27 @@ async def table_names(database_url: str) -> set[str]:
         await engine.dispose()
 
 
+async def foreign_key_deferral(
+    database_url: str,
+    constraint_name: str,
+) -> tuple[bool, bool]:
+    """Read whether one foreign key is deferrable and initially deferred."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT condeferrable, condeferred "
+                    "FROM pg_constraint WHERE conname = :constraint_name"
+                ),
+                {"constraint_name": constraint_name},
+            )
+            row = result.one()
+            return bool(row.condeferrable), bool(row.condeferred)
+    finally:
+        await engine.dispose()
+
+
 @pytest.fixture
 async def scratch_database(database_url: str) -> AsyncIterator[str]:
     """Yield the URL of an empty database created for one test.
@@ -133,6 +154,10 @@ async def test_migrations_apply_to_an_empty_database_and_match_the_metadata(
     assert upgrade.returncode == 0, upgrade.stderr
     assert check.returncode == 0, check.stderr
     assert EXPECTED_TABLES <= await table_names(scratch_database)
+    assert await foreign_key_deferral(
+        scratch_database,
+        "fk_edge_telemetry_messages_sample_id_telemetry_samples",
+    ) == (True, True)
 
 
 async def test_every_migration_downgrades_back_to_an_empty_database(
