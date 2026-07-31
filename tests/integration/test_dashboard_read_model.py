@@ -2,15 +2,16 @@
 
 The page is plain JavaScript and there is no browser in the test suite, so what
 is asserted here is the layer below the rendering: that the existing public
-endpoints answer everything one frame of the dashboard needs, addressed only by
-stable codes. That is also the milestone's claim that no aggregate dashboard
+endpoints answer everything one frame of the dashboard needs, whoever produced
+the data. That is also the milestone's claim that no aggregate dashboard
 endpoint is required — a claim this test would fail if it stopped being true.
 
-Two frames are covered: a seeded growbox nothing has measured yet, which is the
-no-data and empty-history presentation, and one filled by measurements that
+Three frames are covered: an empty cloud, which is what a clean deployment
+serves until a client provisions something; a facility nothing has measured
+yet, which is the no-data presentation; and one filled by measurements that
 arrived over the public Edge boundary, which is the normal one. The cloud runs
-no simulator, so the second frame is produced the way a real gateway produces
-it.
+no simulator and creates no facility of its own, so both later frames are
+produced the way a real gateway produces them.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -18,23 +19,15 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_greenhouse.core.config import Settings
 from ai_greenhouse.gateways.service import GatewayConfigurationService
-from ai_greenhouse.seed.__main__ import run_demo_command
+from tests.integration.factories import create_climate_growbox, create_control_loop
 
 API_URL: str = "/api/v1"
 EDGE_TELEMETRY_URL: str = f"{API_URL}/edge/telemetry"
 NOW: datetime = datetime(2026, 7, 30, 9, 0, tzinfo=UTC)
 HISTORY_LIMIT: int = 60
-
-DEMO_CODES: dict[str, str] = {
-    "site": "home",
-    "facility": "basil-growbox",
-    "control_zone": "main-climate",
-}
 
 DASHBOARD_POINT_CODES: frozenset[str] = frozenset(
     {"air_temperature", "air_humidity", "fan_power", "fan_running"}
@@ -42,10 +35,11 @@ DASHBOARD_POINT_CODES: frozenset[str] = frozenset(
 
 MEASUREMENTS: tuple[tuple[str, float], ...] = (
     ("air_temperature", 22.0),
+    ("air_humidity", 61.0),
     ("air_temperature", 22.5),
     ("air_temperature", 23.0),
 )
-"""Three temperatures inside the demo band, so the frame carries no command."""
+"""Readings inside the configured band, so the frame carries no command."""
 
 
 async def _get(http_client: httpx.AsyncClient, path: str) -> dict[str, Any]:
@@ -55,12 +49,10 @@ async def _get(http_client: httpx.AsyncClient, path: str) -> dict[str, Any]:
     return cast(dict[str, Any], response.json())
 
 
-async def _find_by_code(http_client: httpx.AsyncClient, path: str, code: str) -> dict[str, Any]:
-    """Resolve one collection member by its stable code, as the page does."""
+async def _first(http_client: httpx.AsyncClient, path: str) -> dict[str, Any] | None:
+    """Take the first member of a collection, as the page does."""
     items = (await _get(http_client, path))["items"]
-    match = next((item for item in items if item["code"] == code), None)
-    assert match is not None, f"no resource with code {code!r} at {path}"
-    return match
+    return cast(dict[str, Any], items[0]) if items else None
 
 
 def _envelope(gateway_id: UUID, point: dict[str, Any], value: Any, observed_at: datetime) -> dict:
@@ -82,35 +74,54 @@ def _envelope(gateway_id: UUID, point: dict[str, Any], value: Any, observed_at: 
     }
 
 
+async def test_the_dashboard_discovery_finds_nothing_in_an_empty_cloud(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """The first read of a clean deployment succeeds and returns no facility.
+
+    An empty cloud is a supported state and not an error, which is what the
+    page's explicit empty state is written from. Nothing has provisioned
+    anything in this test, and nothing in the application did it either.
+    """
+    sites = await _get(http_client, f"{API_URL}/sites")
+    facilities = await _get(http_client, f"{API_URL}/facilities")
+
+    assert sites["items"] == []
+    assert sites["total"] == 0
+    assert facilities["items"] == []
+
+
 async def test_the_dashboard_reads_its_frame_from_existing_endpoints(
-    app: FastAPI,
     http_client: httpx.AsyncClient,
     session: AsyncSession,
-    database_settings: Settings,
 ) -> None:
-    """Discover the growbox by code, then read a no-data frame and a measured one."""
-    session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
-    assert await run_demo_command(database_settings, session_factory=session_factory) == 0
+    """Take the configured facility, then read a no-data frame and a measured one."""
+    provisioned = await create_climate_growbox(http_client)
+    loop = await create_control_loop(http_client, provisioned)
 
-    site = await _find_by_code(http_client, f"{API_URL}/sites", DEMO_CODES["site"])
-    facility = await _find_by_code(
-        http_client,
-        f"{API_URL}/facilities?site_id={site['id']}",
-        DEMO_CODES["facility"],
-    )
-    await _find_by_code(
+    site = await _first(http_client, f"{API_URL}/sites")
+    assert site is not None
+    facility = await _first(http_client, f"{API_URL}/facilities?site_id={site['id']}")
+    assert facility is not None
+    control_zone = await _first(
         http_client,
         f"{API_URL}/control-zones?facility_id={facility['id']}",
-        DEMO_CODES["control_zone"],
     )
+    assert control_zone is not None
     points = {
         point["code"]: point
         for point in (await _get(http_client, f"{API_URL}/points?facility_id={facility['id']}"))[
             "items"
         ]
     }
+    control_loop = await _first(
+        http_client,
+        f"{API_URL}/control-loops?control_zone_id={control_zone['id']}",
+    )
 
-    assert facility["name"] == "Basil Growbox"
+    assert facility["id"] == provisioned.facility["id"]
+    assert control_loop is not None
+    assert control_loop["id"] == loop["id"]
     assert DASHBOARD_POINT_CODES <= set(points)
     assert points["air_temperature"]["unit"] == "°C"
     assert points["air_humidity"]["unit"] == "%"
@@ -123,7 +134,12 @@ async def test_the_dashboard_reads_its_frame_from_existing_endpoints(
         http_client,
         f"{API_URL}/points/{points['air_temperature']['id']}/telemetry?limit={HISTORY_LIMIT}",
     )
+    empty_commands = await _get(
+        http_client,
+        f"{API_URL}/commands?control_loop_id={control_loop['id']}&limit=20",
+    )
     assert empty_history["items"] == []
+    assert empty_commands["items"] == []
 
     gateway = await GatewayConfigurationService(session).create(
         site_id=UUID(site["id"]),
@@ -146,6 +162,7 @@ async def test_the_dashboard_reads_its_frame_from_existing_endpoints(
         http_client,
         f"{API_URL}/points/{points['air_temperature']['id']}/state",
     )
+    humidity = await _get(http_client, f"{API_URL}/points/{points['air_humidity']['id']}/state")
     fan_running = await _get(http_client, f"{API_URL}/points/{points['fan_running']['id']}/state")
     history = await _get(
         http_client,
@@ -155,12 +172,19 @@ async def test_the_dashboard_reads_its_frame_from_existing_endpoints(
     assert isinstance(temperature["value"], float)
     assert temperature["value"] == MEASUREMENTS[-1][1]
     assert temperature["quality"] == "good"
-    # No control loop is configured in the plain demo seed, so the fan is still
-    # unmeasured. The dashboard shows that as "No data" and offers no way to
-    # change it.
+    assert humidity["value"] == 61.0
+    # Every temperature stayed inside the band, so the loop decided nothing and
+    # the fan is still unmeasured. The dashboard shows that as "No data" and
+    # offers no way to change it.
     assert fan_running["value"] is None
     assert fan_running["quality"] == "no_data"
-    assert len(history["items"]) == len(MEASUREMENTS)
+    assert (
+        await _get(
+            http_client,
+            f"{API_URL}/commands?control_loop_id={control_loop['id']}&limit=20",
+        )
+    )["items"] == []
+    assert len(history["items"]) == 3
     observed = [sample["observed_at"] for sample in history["items"]]
     assert observed == sorted(observed, reverse=True)
     assert history["items"][0]["value"] == temperature["value"]

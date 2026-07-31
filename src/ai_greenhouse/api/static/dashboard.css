@@ -1,5 +1,5 @@
 /*
- * Styling for the one demonstration page. Deliberately small: no design system,
+ * Styling for the one operational page. Deliberately small: no design system,
  * no component library and no theme layer, because there is one page to style
  * and a second one is out of scope until a milestone asks for it.
  */
@@ -50,28 +50,6 @@ body {
   font-size: 0.85rem;
 }
 
-.badge {
-  justify-self: start;
-  margin: 0.25rem 0 0;
-  padding: 0.2rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: 0.8rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.badge[data-status="running"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.badge[data-status="failed"] {
-  border-color: var(--warning);
-  color: var(--warning);
-}
-
 .notice {
   margin: 0;
   padding: 0.75rem 1rem;
@@ -100,43 +78,13 @@ body {
   font: inherit;
 }
 
+.notice--empty {
+  color: var(--muted);
+}
+
 /* The loading notice belongs to the first read only; later reads keep the page. */
 .dashboard:not([data-phase="loading"]) [data-region="loading"] {
   display: none;
-}
-
-.controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.controls button {
-  padding: 0.5rem 1.1rem;
-  border: 1px solid var(--accent);
-  border-radius: 0.4rem;
-  background: var(--accent);
-  color: #ffffff;
-  cursor: pointer;
-  font: inherit;
-}
-
-.controls button[data-action="stop"] {
-  background: var(--surface);
-  color: var(--accent);
-}
-
-.controls button:disabled {
-  border-color: var(--line);
-  background: var(--line);
-  color: var(--muted);
-  cursor: not-allowed;
-}
-
-.controls__hint {
-  color: var(--muted);
-  font-size: 0.85rem;
 }
 
 .readings {

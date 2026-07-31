@@ -9,17 +9,25 @@ typed configuration, structured logging, and a database-aware health endpoint.
 The implemented domain is the complete digital growbox topology — sites,
 facilities, control zones, logical points, current-state projections,
 zone-point assignments, and a single-request facility configuration — plus
-append-only telemetry, current-state updates, telemetry history, deterministic
-climate simulation, persisted runs, a single-process runtime, and the first
+append-only telemetry, current-state updates, telemetry history, and the first
 automation loop: an accepted temperature is evaluated by a hysteresis policy and
 turns a logical fan on or off through an idempotent command. Administrative
 clients can provision stable Edge gateway identities and logical-point
 authorization through HTTP, then use the Cloud ↔ Edge v1 data plane for
-telemetry and command delivery. Version `0.1` closes the in-process loop visibly:
-one same-origin dashboard page starts the simulation, shows the fan switching on
-as the growbox warms past `26 °C` and off again as it cools below `24 °C`, and
-stops the run. The runtime is Python 3.14 with PostgreSQL 18. Production
-authentication, devices, and a frontend framework are not included.
+telemetry and command delivery. One same-origin dashboard page reads the
+persisted result: the current temperature, humidity and fan state of the
+configured facility, its recent temperature history, and the commands the
+control loop applied.
+
+The cloud creates no data of its own. A clean deployment starts with empty
+domain tables and stays that way until a client provisions a facility through
+the public APIs, and every measurement comes from an external producer — real
+equipment, or the environment simulation that lives in the separate
+[`greenhouse-simulation-lab`](https://github.com/topol-3000/greenhouse-simulation-lab)
+repository.
+
+The runtime is Python 3.14 with PostgreSQL 18. Production authentication,
+devices, and a frontend framework are not included.
 
 ## Cloud ↔ Edge contracts
 
@@ -151,19 +159,19 @@ Wait for PostgreSQL readiness
         ↓
 Run alembic upgrade head
         ↓
-Run the idempotent demo-init bootstrap
-        ↓
 Start Uvicorn
 ```
 
 Compose also waits for the PostgreSQL health check, but the API performs its own
 bounded connection probe before running migrations.
 
-The bootstrap step runs only when the container is started without a command and
-`APP_ENV` is `local`, which is the default. An explicit command — `pytest`,
-`alembic`, a shell — runs exactly that and seeds nothing. `demo-init` is
-idempotent, so a second `docker compose up` finds what the first one created; it
-is described under [The 0.1 browser demo](#the-01-browser-demo).
+Nothing else runs first. There is no seed, no bootstrap command and no startup
+hook that writes domain data, so a clean database is still empty when the API
+starts answering: no site, no facility, no zone, no point, no gateway, no
+telemetry and no command. An explicit command — `pytest`, `alembic`, a shell —
+runs exactly that. Everything the system holds is created by a client through
+the public APIs, described under
+[Provision a growbox over HTTP](#provision-a-growbox-over-http).
 
 Verify the service:
 
@@ -194,286 +202,205 @@ If PostgreSQL cannot execute the health query, the endpoint returns HTTP 503 wit
 The response never includes connection strings, credentials, exception details,
 or stack traces. Technical failure context is written to secret-redacted JSON logs.
 
-## The 0.1 browser demo
+## The dashboard
 
-One command prepares everything and serves the dashboard:
+`docker compose up --build` serves one same-origin page on
+<http://localhost:8000/>. It is an operational read view of what is persisted,
+and nothing else: it creates no resource, starts and stops no producer, and adds
+no endpoint of its own — every value on it comes from the same public API any
+other client reads.
 
-```bash
-docker compose up --build
-```
+The page shows, for the configured facility:
 
-Then open <http://localhost:8000/>.
+- the facility name;
+- the current temperature, humidity and fan state;
+- the recent temperature history, as one inline chart;
+- recent activity: the commands the control loop applied and the newest
+  temperature samples, newest first;
+- an error banner with a **Retry** button when a read fails, which keeps the
+  last values that were valid on screen.
 
-The startup bootstrap (`demo-init`) creates or finds the growbox described under
-[Seed the demo growbox](#seed-the-demo-growbox) plus one immutable `hysteresis-v1`
-control loop with `lower_threshold = 24.0` and `upper_threshold = 26.0`. It creates
-no simulation run, no telemetry and no command: the page starts out empty on
-purpose, and the reader presses Start themselves.
+It refreshes every five seconds by a plain poll of those read endpoints. There
+is no WebSocket, no SSE and no producer lifecycle signal, so the refresh is
+independent of who is writing the telemetry and of whether anything is writing
+at all.
 
-### What to do and what to expect
+### What it shows before anything exists
 
-1. Before starting, the dashboard shows `Basil Growbox`, the run badge
-   `Not started`, `No data` for temperature, humidity and fan, and an empty chart.
-2. Press **Start simulation**. The page creates a `simple-climate-v2` run with
-   `22 °C` / `65 %`, ambient `30 °C` / `50 %` and speed multiplier `600`, starts it,
-   and begins refreshing once a second.
-3. Temperature climbs toward `30 °C`. Around five ticks in it passes `26 °C`, the
-   control loop applies `fan_power = true`, and the fan reading becomes `On`.
-4. With the fan on, the model aims `8 °C` below ambient, so temperature turns
-   around and falls.
-5. Around five ticks later it drops below `24 °C`, the loop applies
-   `fan_power = false`, and the fan reading returns to `Off`.
-6. Recent activity lists the whole story newest-first: the run's lifecycle, both
-   fan commands with their timestamps, and the latest temperatures.
-7. Reload the page. The badge, readings, chart and activity are rebuilt from the
-   persisted run — nothing is kept in the browser — and if the run is still going,
-   refreshing resumes on its own.
-8. Press **Stop simulation**. The badge becomes `Stopped`, refreshing ends, and no
-   further samples appear. Pressing Start again creates a *new* run and leaves the
-   previous one and its history untouched.
+A clean cloud has no facility, and the page says so instead of failing: it
+renders `No facility configured` and keeps polling, so a facility provisioned
+afterwards appears on the next refresh without a reload. A facility that exists
+but has never been measured renders with `No data` in every reading and an empty
+chart — that is the normal state of a growbox whose gateway has not reported
+yet.
 
-The complete `OFF → ON → OFF` cycle takes roughly 10–15 real seconds with the
-documented defaults. Left running, the growbox warms again and the cycle repeats;
-each switch is one more command in recent activity.
+The page shows the first configured facility. Which facility that is depends
+entirely on what a client provisioned; no code, name or identifier is compiled
+into the page.
 
-Running the bootstrap by hand, which is the same command the entrypoint runs:
+### Where the data comes from
 
-```bash
-docker compose run --rm api python -m ai_greenhouse.seed demo-init
-```
-
-If the growbox already carries a different control loop, `demo-init` reports the
-conflict and stops. A loop is immutable and nothing is edited or deleted to make
-the demonstration fit.
-
-### Limitations of the demonstration
-
-- `simple-climate-v2` is a verification model, not physics. Its response rates and
-  its `8 °C` fan cooling offset exist so that a closed control cycle is visible in
-  seconds; they are not a calibrated growbox, and no measurement here says anything
-  about real equipment.
-- There is one page and one growbox. No authentication, no facility selector, no
-  topology forms and no manual fan control: the fan is switched by the control loop
-  or not at all.
-- Live updates are one-second polling while a run is active. There is no WebSocket
-  and no server push.
-- Recent activity is composed in the browser from the run, its commands and the
-  latest samples. No event log is stored, so it is a view of those resources rather
-  than a record of its own.
-- The simulation runtime lives in the API process. Restarting the container marks
-  an interrupted run `failed`, which the dashboard then shows with its bounded
-  failure reason.
-
-## Seed the demo growbox
-
-With PostgreSQL running, create the complete basil growbox with one command:
+Measurements reach the cloud only over the public Cloud ↔ Edge v1 telemetry
+boundary. To watch the fan switch on and off locally without any physical
+equipment, run the environment simulation from the separate
+[`greenhouse-simulation-lab`](https://github.com/topol-3000/greenhouse-simulation-lab)
+repository against this cloud. It owns the Basil Growbox scenario, the virtual
+sensors and actuators, the virtual gateway and the scenario lifecycle, and it
+provisions its own topology through the public APIs described below. Start the
+cloud first, then, from that repository's checkout:
 
 ```bash
-docker compose run --rm api python -m ai_greenhouse.seed demo
+uv run greenhouse-simulation-lab provision
+uv run greenhouse-simulation-lab run
 ```
 
-The command creates or finds this exact configuration:
+Stopping it with Ctrl+C stops the producer only. The cloud keeps running, and
+every topology, telemetry sample, state and command it wrote stays exactly where
+it is.
 
-```text
-Site:         Home           code: home,          timezone: UTC
-Facility:     Basil Growbox  code: basil-growbox, type: growbox
-ControlZone:  Main Climate   code: main-climate,  type: climate
+## Provision a growbox over HTTP
 
-Points (all facility-scoped):
-  air_temperature   measurement  float    unit: °C   range: -20..60
-  air_humidity      measurement  float    unit: %    range: 0..100
-  fan_power         control      boolean  no unit
-  fan_running       status       boolean  no unit
-
-Assignments on Main Climate:
-  air_temperature -> primary_measurement
-  air_humidity    -> secondary_measurement
-  fan_power       -> control_output
-  fan_running     -> status_feedback
-```
-
-The seed is idempotent. Running the command again finds the records by `code`
-within their parent scope, creates no duplicates, and exits successfully. All
-writes use the same domain services as the HTTP API. The command emits
-structured JSON logs containing every created or found identifier.
-
-`demo` creates the topology only. `demo-init` is this seed plus the `24–26 °C`
-control loop the browser demonstration needs, and it is the one the local Compose
-entrypoint runs before Uvicorn. Neither is a FastAPI startup hook, and an explicit
-container command runs neither.
-
-The same module carries the automation demonstration driver, which is described
-in its own walkthrough below:
-
-```bash
-docker compose run --rm api python -m ai_greenhouse.seed automation-demo
-```
-
-## Topology demo walkthrough
-
-The following Bash session starts the stack, seeds it, discovers the generated
-identifiers, and reads the complete topology API scenario:
+A clean cloud starts empty, so the first thing any client does is provision.
+This is the complete sequence, in the order the API expects it, and it is the
+same sequence an external provisioning client such as Simulation Lab performs.
+Every request is a public endpoint; nothing here imports cloud Python code or
+touches PostgreSQL.
 
 ```bash
 docker compose up --build -d
-docker compose run --rm api python -m ai_greenhouse.seed demo
-
 curl -fsS http://localhost:8000/health
 
+json() { python3 -c "import json,sys; print($1)"; }
+
 SITE_ID=$(
-  curl -fsS 'http://localhost:8000/api/v1/sites' |
-    python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "home"))'
+  curl -fsS -X POST 'http://localhost:8000/api/v1/sites' \
+    -H 'content-type: application/json' \
+    -d '{"name":"Home","code":"home","timezone":"UTC"}' |
+    json 'json.load(sys.stdin)["id"]'
 )
-curl -fsS "http://localhost:8000/api/v1/sites/${SITE_ID}"
-
 FACILITY_ID=$(
-  curl -fsS "http://localhost:8000/api/v1/facilities?site_id=${SITE_ID}" |
-    python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "basil-growbox"))'
+  curl -fsS -X POST 'http://localhost:8000/api/v1/facilities' \
+    -H 'content-type: application/json' \
+    -d "{\"site_id\":\"${SITE_ID}\",\"name\":\"Basil Growbox\",\"code\":\"basil-growbox\",\"facility_type\":\"growbox\"}" |
+    json 'json.load(sys.stdin)["id"]'
 )
-curl -fsS "http://localhost:8000/api/v1/facilities?site_id=${SITE_ID}"
-curl -fsS "http://localhost:8000/api/v1/control-zones?facility_id=${FACILITY_ID}"
-curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}"
+ZONE_ID=$(
+  curl -fsS -X POST 'http://localhost:8000/api/v1/control-zones' \
+    -H 'content-type: application/json' \
+    -d "{\"facility_id\":\"${FACILITY_ID}\",\"name\":\"Main Climate\",\"code\":\"main-climate\",\"zone_type\":\"climate\"}" |
+    json 'json.load(sys.stdin)["id"]'
+)
 
-for POINT_ID in $(
-  curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}" |
-    python -c 'import json,sys; print(*(x["id"] for x in json.load(sys.stdin)["items"]))'
-); do
-  curl -fsS "http://localhost:8000/api/v1/points/${POINT_ID}/state"
-done
+create_point() {
+  curl -fsS -X POST 'http://localhost:8000/api/v1/points' \
+    -H 'content-type: application/json' \
+    -d "{\"site_id\":\"${SITE_ID}\",\"facility_id\":\"${FACILITY_ID}\",\"code\":\"$1\",\"name\":\"$2\",\"point_kind\":\"$3\",\"metric_type\":\"$1\",\"data_type\":\"$4\",\"unit\":$5}" |
+    json 'json.load(sys.stdin)["id"]'
+}
+assign() {
+  curl -fsS -X POST "http://localhost:8000/api/v1/control-zones/${ZONE_ID}/points" \
+    -H 'content-type: application/json' \
+    -d "{\"point_id\":\"$1\",\"role\":\"$2\"}" > /dev/null
+}
+
+TEMPERATURE_ID=$(create_point air_temperature 'Air Temperature' measurement float '"°C"')
+HUMIDITY_ID=$(create_point air_humidity 'Air Humidity' measurement float '"%"')
+FAN_POWER_ID=$(create_point fan_power 'Fan Power' control boolean null)
+FAN_RUNNING_ID=$(create_point fan_running 'Fan Running' status boolean null)
+
+assign "${TEMPERATURE_ID}" primary_measurement
+assign "${HUMIDITY_ID}" secondary_measurement
+assign "${FAN_POWER_ID}" control_output
+assign "${FAN_RUNNING_ID}" status_feedback
 
 curl -fsS "http://localhost:8000/api/v1/facilities/${FACILITY_ID}/configuration"
 ```
 
-Each point-state response, and every short state in the final configuration,
-has `"quality": "no_data"` and `"value": null`. The topology defines the logical
-identities and their empty state projections; it does not produce values. Values
-arrive through telemetry, which the next walkthrough drives with the simulator.
+The configuration response describes the whole growbox in one read: the site,
+the facility, the zone with its four assignments in role order, and each point
+with its short state. Every one of those states is `"quality": "no_data"` with
+`"value": null`. The topology defines the logical identities and their empty
+state projections; it does not produce values.
 
-## Simulation demo walkthrough
+Points, codes and roles are yours to choose — this growbox is an example, not a
+fixture the cloud knows about. The dashboard renders `air_temperature`,
+`air_humidity` and `fan_running` when a facility defines them, and shows
+`No data` for the ones it does not.
 
-Start from the same seed; it supplies the topology and stable logical point IDs,
-but creates no simulation run or telemetry. This copy-pasteable Bash session
-discovers those IDs, creates and starts a run, reads changing temperature and
-humidity, and stops the run:
+Nothing about this is single-use: creating a site, a facility, a zone, a point
+or an assignment that already exists is refused with a documented HTTP 409
+rather than duplicated, so a provisioning client can resolve-or-create safely.
 
-```bash
-docker compose up --build -d
-docker compose run --rm api python -m ai_greenhouse.seed demo
+## Configure the fan automation
 
-FACILITY_ID=$(
-  curl -fsS 'http://localhost:8000/api/v1/facilities' |
-    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "basil-growbox"))'
-)
-ZONE_ID=$(
-  curl -fsS "http://localhost:8000/api/v1/control-zones?facility_id=${FACILITY_ID}" |
-    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "main-climate"))'
-)
-TEMPERATURE_ID=$(
-  curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}" |
-    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "air_temperature"))'
-)
-HUMIDITY_ID=$(
-  curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}" |
-    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "air_humidity"))'
-)
-
-RUN=$(
-  curl -fsS -X POST 'http://localhost:8000/api/v1/simulation-runs' \
-    -H 'content-type: application/json' \
-    -d "{\"control_zone_id\":\"${ZONE_ID}\",\"speed_multiplier\":3600,\"initial_temperature\":22.0,\"initial_humidity\":65.0,\"ambient_temperature\":30.0,\"ambient_humidity\":50.0}"
-)
-printf '%s\n' "${RUN}"
-RUN_ID=$(
-  printf '%s' "${RUN}" |
-    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["id"])'
-)
-
-curl -fsS -X POST "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}/start"
-sleep 4
-
-curl -fsS "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}"
-curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/state"
-curl -fsS "http://localhost:8000/api/v1/points/${HUMIDITY_ID}/state"
-curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry"
-curl -fsS "http://localhost:8000/api/v1/points/${HUMIDITY_ID}/telemetry"
-
-curl -fsS -X POST "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}/stop"
-SAMPLES_AT_STOP=$(
-  curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry" |
-    docker compose exec -T api python -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))'
-)
-sleep 2
-SAMPLES_AFTER_STOP=$(
-  curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry" |
-    docker compose exec -T api python -c 'import json,sys; print(len(json.load(sys.stdin)["items"]))'
-)
-test "${SAMPLES_AT_STOP}" = "${SAMPLES_AFTER_STOP}"
-curl -fsS "http://localhost:8000/api/v1/simulation-runs/${RUN_ID}"
-```
-
-Creation returns HTTP 201 with `"status": "created"`. Start returns HTTP 202
-with `"status": "running"`, an immediate initial sample for each simulated
-point, and `"step_index": 1`. At `speed_multiplier: 3600`, every later
-real-second tick advances virtual time by one hour, so both state values move
-toward the ambient values and each telemetry history accumulates samples.
-
-The history is newest first. Its `observed_at` is the model's virtual instant,
-while `received_at` is the real intake instant; after four ticks they differ by
-almost four hours. Both point states have `"quality": "simulated"`. Stop returns
-HTTP 200 with `"status": "stopped"`, and the final equality check proves that no
-new temperature sample appeared after the stop response.
-
-## Fan automation demo walkthrough
-
-The automation flow does not depend on the simulator. It reacts to whatever
-became a point's current temperature, so this walkthrough uses a controlled
-driver instead — three readings, no run to start, no model to wait for. A
-device sending the same three values would produce the same two commands.
-
-Run it against a fresh database:
+The control loop is what turns an accepted temperature into a fan command.
+Configure one on the zone provisioned above:
 
 ```bash
-docker compose up --build -d
-docker compose run --rm api python -m ai_greenhouse.seed demo
-
-FACILITY_ID=$(
-  curl -fsS 'http://localhost:8000/api/v1/facilities' |
-    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "basil-growbox"))'
-)
-ZONE_ID=$(
-  curl -fsS "http://localhost:8000/api/v1/control-zones?facility_id=${FACILITY_ID}" |
-    docker compose exec -T api python -c 'import json,sys; print(next(x["id"] for x in json.load(sys.stdin)["items"] if x["code"] == "main-climate"))'
-)
-POINTS=$(curl -fsS "http://localhost:8000/api/v1/points?facility_id=${FACILITY_ID}")
-point_id() {
-  printf '%s' "${POINTS}" |
-    docker compose exec -T api python -c "import json,sys; print(next(x['id'] for x in json.load(sys.stdin)['items'] if x['code'] == '$1'))"
-}
-TEMPERATURE_ID=$(point_id air_temperature)
-FAN_POWER_ID=$(point_id fan_power)
-FAN_RUNNING_ID=$(point_id fan_running)
-
-LOOP=$(
+LOOP_ID=$(
   curl -fsS -X POST 'http://localhost:8000/api/v1/control-loops' \
     -H 'content-type: application/json' \
-    -d "{\"control_zone_id\":\"${ZONE_ID}\",\"measurement_point_id\":\"${TEMPERATURE_ID}\",\"control_point_id\":\"${FAN_POWER_ID}\",\"status_point_id\":\"${FAN_RUNNING_ID}\",\"lower_threshold\":24.0,\"upper_threshold\":26.0}"
+    -d "{\"control_zone_id\":\"${ZONE_ID}\",\"measurement_point_id\":\"${TEMPERATURE_ID}\",\"control_point_id\":\"${FAN_POWER_ID}\",\"status_point_id\":\"${FAN_RUNNING_ID}\",\"lower_threshold\":24.0,\"upper_threshold\":26.0}" |
+    json 'json.load(sys.stdin)["id"]'
 )
-printf '%s\n' "${LOOP}"
-LOOP_ID=$(
-  printf '%s' "${LOOP}" |
-    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["id"])'
-)
+```
 
-docker compose run --rm api python -m ai_greenhouse.seed automation-demo
+A loop is immutable and there is one per zone: a second one, or a different
+band, is refused instead of overwriting what is configured.
+
+Automation reacts to whatever became the point's current temperature, whoever
+measured it. Register a gateway and authorize it for the four points:
+
+```bash
+GATEWAY_ID=$(
+  curl -fsS -X POST 'http://localhost:8000/api/v1/gateways' \
+    -H 'content-type: application/json' \
+    -d "{\"site_id\":\"${SITE_ID}\",\"code\":\"growbox-gateway\"}" |
+    json 'json.load(sys.stdin)["gateway"]["id"]'
+)
+curl -fsS -X POST "http://localhost:8000/api/v1/gateways/${GATEWAY_ID}/points" \
+  -H 'content-type: application/json' \
+  -d "{\"point_ids\":[\"${TEMPERATURE_ID}\",\"${HUMIDITY_ID}\",\"${FAN_POWER_ID}\",\"${FAN_RUNNING_ID}\"]}"
+```
+
+The cycle then has two halves, and the gateway owns one of them: the cloud
+decides and hands out a command, and the environment behind the gateway applies
+it and reports the result back as ordinary telemetry. Both helpers below are
+what a gateway does — Simulation Lab performs exactly this for you.
+
+```bash
+submit() {
+  curl -fsS -X POST 'http://localhost:8000/api/v1/edge/telemetry' \
+    -H 'content-type: application/json' \
+    -d "{\"contract_version\":\"1.0\",\"gateway_id\":\"${GATEWAY_ID}\",\"messages\":[{\"message_id\":\"$(python3 -c 'import uuid; print(uuid.uuid4())')\",\"point_id\":\"$1\",\"data_type\":\"$2\",\"value\":$3,\"observed_at\":\"$4\",\"quality\":\"good\",\"source\":{\"kind\":\"$5\",\"id\":\"growbox.$6\"}}]}" > /dev/null
+}
+
+apply_pending() {
+  PENDING=$(curl -fsS "http://localhost:8000/api/v1/edge/gateways/${GATEWAY_ID}/commands")
+  COMMAND_ID=$(printf '%s' "${PENDING}" | json 'json.load(sys.stdin)["commands"][0]["command_id"]')
+  DESIRED=$(printf '%s' "${PENDING}" | json 'str(json.load(sys.stdin)["commands"][0]["desired_value"]).lower()')
+  curl -fsS -X PUT \
+    "http://localhost:8000/api/v1/edge/gateways/${GATEWAY_ID}/commands/${COMMAND_ID}/acknowledgement" \
+    -H 'content-type: application/json' \
+    -d "{\"contract_version\":\"1.0\",\"gateway_id\":\"${GATEWAY_ID}\",\"command_id\":\"${COMMAND_ID}\",\"outcome\":\"applied\",\"acknowledged_at\":\"$1\"}" > /dev/null
+  submit "${FAN_POWER_ID}" boolean "${DESIRED}" "$1" controller fan_power
+  submit "${FAN_RUNNING_ID}" boolean "${DESIRED}" "$1" actuator fan_running
+}
+
+submit "${TEMPERATURE_ID}" float 27.0 '2026-07-30T09:00:00+00:00' sensor air_temperature
+apply_pending '2026-07-30T09:00:30+00:00'
+
+submit "${TEMPERATURE_ID}" float 25.0 '2026-07-30T09:01:00+00:00' sensor air_temperature
+
+submit "${TEMPERATURE_ID}" float 23.0 '2026-07-30T09:02:00+00:00' sensor air_temperature
+apply_pending '2026-07-30T09:02:30+00:00'
 
 curl -fsS "http://localhost:8000/api/v1/commands?control_loop_id=${LOOP_ID}"
-curl -fsS "http://localhost:8000/api/v1/points/${FAN_POWER_ID}/state"
 curl -fsS "http://localhost:8000/api/v1/points/${FAN_RUNNING_ID}/state"
 curl -fsS "http://localhost:8000/api/v1/points/${TEMPERATURE_ID}/telemetry"
 ```
 
-The driver offers `27.0`, `25.0` and `23.0 °C` with increasing `observed_at`
-through the same in-process path the simulator uses, and the loop answers:
+The loop answers:
 
 ```text
 27.0 °C   above the band, fan is off   ->  command fan_power = true
@@ -481,30 +408,31 @@ through the same in-process path the simulator uses, and the loop answers:
 23.0 °C   below the band, fan is on    ->  command fan_power = false
 ```
 
-The command list comes back newest first, so the `false` command is first. Each
-command names the temperature sample that caused it and the two samples the
-adapter wrote, and both `fan_power` and `fan_running` end at `"value": false`
-with `"quality": "simulated"` and `"revision": 2`. Nothing created a
-`SimulationRun`, and no client ever sent a command.
+The command list comes back newest first, so the `false` command is first. Both
+are `"state": "applied"` and carry the `acknowledged_at` the gateway reported;
+each names the temperature sample that caused it, and `fan_running` ends at
+`"value": false` with `"revision": 2`. No client ever sent a command: a command
+is a consequence of accepted telemetry and there is no endpoint that creates
+one.
 
-The driver derives its sample identifiers, so running it a second time records
-`"outcome": "duplicate"` for all three readings and adds no command and no
-sample. That is also why it wants a fresh database: its readings carry fixed
-`observed_at` instants, and a temperature that already has newer telemetry would
-leave them in history without making them current.
+The second half matters to the decision, not only to the hardware: the loop
+switches the fan off because the fan was *reported* running, so a command nobody
+applies stays `"pending"` and the next temperature below the band decides
+nothing. That half of the cycle is the Cloud ↔ Edge v1 contract, documented
+under [`contracts/cloud-edge/v1/`](contracts/cloud-edge/v1/README.md).
 
 Follow one command's chain, or ask what a single measurement caused:
 
 ```bash
 COMMAND_ID=$(
   curl -fsS "http://localhost:8000/api/v1/commands?control_loop_id=${LOOP_ID}&limit=1" |
-    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])'
+    json 'json.load(sys.stdin)["items"][0]["id"]'
 )
 curl -fsS "http://localhost:8000/api/v1/commands/${COMMAND_ID}"
 
 TRIGGER_ID=$(
   curl -fsS "http://localhost:8000/api/v1/commands/${COMMAND_ID}" |
-    docker compose exec -T api python -c 'import json,sys; print(json.load(sys.stdin)["trigger_sample_id"])'
+    json 'json.load(sys.stdin)["trigger_sample_id"]'
 )
 curl -fsS "http://localhost:8000/api/v1/commands?trigger_sample_id=${TRIGGER_ID}"
 ```
@@ -1019,7 +947,7 @@ GET    /api/v1/control-loops?control_zone_id=&limit=&offset=
 GET    /api/v1/control-loops/{control_loop_id}
 ```
 
-Configure the loop of the demo growbox:
+Configure the loop of a climate zone:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/control-loops \
@@ -1136,10 +1064,14 @@ Rules worth knowing before calling it:
 
 ## Boundaries
 
-The `demo` seed creates a topology-only growbox and `demo-init` adds one control
-loop; neither creates a simulation run, telemetry, a command or a device fixture.
-The following are not part of the system:
+The cloud owns the domain APIs and none of the data reachable through them: it
+creates no site, facility, zone, point, gateway, telemetry sample or command of
+its own, at startup or anywhere else. The following are not part of the system:
 
+- no seed, demo dataset, bootstrap command or startup fixture;
+- no executable environment simulation, simulated time or virtual device: that
+  is `greenhouse-simulation-lab`, which reaches this application only as an
+  ordinary HTTP client;
 - no `Area` physical-space hierarchy;
 - no assignment history — removing a zone-point assignment removes only that
   current link;
@@ -1149,7 +1081,9 @@ The following are not part of the system:
 - no frontend framework, build pipeline or design system: the dashboard is one
   page of plain HTML, CSS and JavaScript served from this application;
 - no dashboard aggregate endpoint, no persisted event log and no WebSocket or
-  SSE: the page polls the existing resources while a run is active;
+  SSE: the page polls the existing read resources on a fixed interval;
+- no dashboard action that starts, stops or configures a producer: the page
+  reads, and its only button re-reads;
 - no endpoint that creates a command: a command is a consequence of accepted
   telemetry, never something a client asks for;
 - no manual fan control, no delivery attempts, retries or expiry, and no
@@ -1157,11 +1091,11 @@ The following are not part of the system:
   stored;
 - no policy versions, schedules, PID or rules engine: a control loop carries
   its own `hysteresis-v1` thresholds and nothing else;
-- no distributed workers: the simulation runtime is single-process and lives
-  inside the API application.
+- no in-process producer and no distributed workers: the application owns no
+  background task.
 
-Point state is filled by append-only telemetry, which the in-process simulator
-and the controlled automation driver both drive through the same path.
+Point state is filled by append-only telemetry, and every producer offers it
+through the one public Edge ingestion path.
 
 ## Configuration
 
@@ -1237,9 +1171,10 @@ docker compose down -v
 docker compose up --build
 ```
 
-That is also how the `0.1` demonstration is verified from a clean environment:
-after the rebuild, <http://localhost:8000/> serves a bootstrapped growbox with no
-run, no telemetry and no commands yet.
+After the rebuild the database holds the Alembic version row and nothing else:
+<http://localhost:8000/> serves the dashboard's `No facility configured` state,
+and `GET /api/v1/sites` answers `{"items": [], "total": 0, ...}` until something
+provisions.
 
 ## Continuous integration
 
@@ -1279,9 +1214,9 @@ src/ai_greenhouse/
 ├── topology/            # Site, Facility, ControlZone and zone point assignments
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
-├── simulation/          # Deterministic climate runs and in-process runtime
 ├── control/             # Hysteresis loops, commands and the actuator boundary
-├── seed/                # Explicit demo seed, 0.1 bootstrap and automation driver
+├── gateways/            # Stable gateway identities and point authorization
+├── edge/                # The Cloud ↔ Edge v1 telemetry and command adapter
 └── infrastructure/
     └── database/        # Async engine, metadata, readiness, and health probe
 ```
