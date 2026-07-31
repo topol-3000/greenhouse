@@ -358,7 +358,12 @@ async def test_acknowledgement_path_body_mismatch_is_validation_error(
 async def test_openapi_exposes_only_the_published_edge_operations(
     http_client: httpx.AsyncClient,
 ) -> None:
-    """The generated OpenAPI paths and methods match the immutable manifest."""
+    """The generated OpenAPI paths and methods match the immutable manifest.
+
+    The expectation is read from ``manifest.json`` rather than repeated here, so
+    an implemented operation the manifest does not publish — and a published
+    operation the adapter does not implement — both fail as contract drift.
+    """
     document = (await http_client.get("/openapi.json")).json()
     edge_operations = {
         path: set(methods) & {"get", "post", "put", "patch", "delete"}
@@ -366,8 +371,17 @@ async def test_openapi_exposes_only_the_published_edge_operations(
         if path.startswith("/api/v1/edge/")
     }
 
-    assert edge_operations == {
+    manifest = json.loads((CONTRACT_ROOT / "manifest.json").read_text())
+    published: dict[str, set[str]] = {}
+    for operation in manifest["operations"].values():
+        mapping = operation.get("http")
+        if mapping is None:
+            continue
+        published.setdefault(mapping["path"], set()).add(mapping["method"].lower())
+
+    assert published == {
         "/api/v1/edge/telemetry": {"post"},
         "/api/v1/edge/gateways/{gateway_id}/commands": {"get"},
         ("/api/v1/edge/gateways/{gateway_id}/commands/{command_id}/acknowledgement"): {"put"},
     }
+    assert edge_operations == published

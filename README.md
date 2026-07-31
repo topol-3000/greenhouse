@@ -38,6 +38,39 @@ PUT  /api/v1/edge/gateways/{gateway_id}/commands/{command_id}/acknowledgement
 These operations are the Edge data plane. Their closed v1 representations stay
 independent of the administrative provisioning API described next.
 
+### Verifying a vendored copy of the contract
+
+An independent Edge consumer copies one version directory and has to be able to
+prove, offline, that its copy is what cloud published.
+[`contracts/cloud-edge/v1/checksums.json`](contracts/cloud-edge/v1/checksums.json)
+is that proof: the SHA-256 of every machine-readable artifact — the manifest,
+the schemas and the examples. `README.md` is deliberately not covered, because a
+patch release may clarify prose without changing validation.
+
+Regenerate the index after publishing a new version, and verify the current one:
+
+```bash
+uv run python scripts/publish_contract_checksums.py
+uv run pytest tests/contracts
+```
+
+`tests/contracts` imports no `ai_greenhouse` module. It checks that every
+artifact is indexed exactly once, that the indexed digests match the published
+bytes, and that the manifest points only at indexed artifacts. Because published
+v1.0 artifacts are immutable, an edited artifact fails there rather than
+reaching a consumer.
+
+The generated OpenAPI document is checked against the same manifest in
+`tests/integration/edge/test_edge_api.py`, so an Edge operation the manifest
+does not publish — or a published operation the adapter does not implement — is
+contract drift and fails.
+
+The external side of this verification lives in the consumer that vendors the
+contract. `greenhouse-simulation-lab` recomputes the same digests against its
+snapshot with `greenhouse-simulation-lab verify-contract`, optionally comparing
+against a cloud checkout, and its `docs/kan-56-external-full-cycle.md` records
+the full external `OFF → ON → OFF` walkthrough this cloud was verified against.
+
 ## Gateway management-plane API
 
 An administrative provisioning client can configure the gateway-specific part

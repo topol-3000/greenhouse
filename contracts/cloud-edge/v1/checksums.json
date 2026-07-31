@@ -1,0 +1,26 @@
+{
+  "algorithm": "sha256",
+  "artifacts": {
+    "examples/invalid/telemetry-no-data-quality.json": "a260d8d970cf5c2c85e6dc5942d57f0dd780b08cc840a45c643cb4d31abcb97e",
+    "examples/invalid/telemetry-received-at.json": "3d198d0839030f46a7c87a462f803021ccb087b39b854678c14e89bc2af73c3c",
+    "examples/invalid/telemetry-type-mismatch.json": "fe467b690d2336a40c0c6660c26a452fe00e4f4d0fc2e7bd849fe6ece17e0e4d",
+    "examples/valid/command-acknowledgement-applied.json": "b086969d17fa920c7670fcf04c28d29f84b2621cec9279f8960324d49c40feb2",
+    "examples/valid/command-acknowledgement-rejected.json": "7b2017689b61926e8a2224e9b4a86647e082d504247f0913cd68e4b5372b1ea7",
+    "examples/valid/command-list-empty.json": "fd5102443f93a8d6318ac42be0cc00722f4594a2de41ab4a42fb6fe10ab864cf",
+    "examples/valid/command-list.json": "1b02325953a85ef2c3a0de2d6515f36052f1fe7a9956c380b0a04efc5f8f0d79",
+    "examples/valid/error-gateway-point-forbidden.json": "db18dea1445c5bc1decbe6386c6cd8e318dcad69bad9f74b4450d55c5377c85c",
+    "examples/valid/error-validation.json": "1221883c13a182fc55ad4e2bb04359c8a9ea4ef5cb343e184b1f1a36b08d85ff",
+    "examples/valid/telemetry-batch.json": "cb309e7e2e999e4097e06d0597094021a2af73d2f16ad0bdaf70d39bf01eff44",
+    "examples/valid/telemetry-command-state.json": "35072957b128f0052b707d03f76310dee1a960446df71c26f497deda789f1d91",
+    "examples/valid/telemetry-ingestion-result.json": "d35e2ab999473deab0f552dcf3cf5268ce55f5c8fa0ca39b46f12f44a5ddce3f",
+    "examples/valid/telemetry-single.json": "552ecf154e2e6e115253d0b2762deb60f3451d542f0c9807087a70e1cb891925",
+    "manifest.json": "5ecae2f9ede9c615b63446e155902bf43178e4ab1ceaec2e9ad7f00acf95b492",
+    "schemas/command-acknowledgement.schema.json": "5a445d9c341f8661bfe8282aeaa555906cba00f4f59ec351e60ed34a562c916e",
+    "schemas/command-list.schema.json": "e5c3c2c574a1740022f827ca6ce5963f9590e71ad62260b611bca701f2939514",
+    "schemas/error.schema.json": "4f0c89cf01f96302c5874fcac600388df1c69218e69e6cca01b24b05d0d044fa",
+    "schemas/telemetry-envelope.schema.json": "ba8ca8d971b236637c605ac29b749997ae2ebc9405539b9d4da3a75915297c7e",
+    "schemas/telemetry-ingestion-result.schema.json": "387961efae2dc250e46f4b713b429b4305ff760998c9abaa49a2cd660829a3d6"
+  },
+  "contract": "ai-greenhouse-cloud-edge",
+  "version": "1.0"
+}

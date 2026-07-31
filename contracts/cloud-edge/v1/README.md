@@ -156,6 +156,23 @@ JSON Schema Draft 2020-12 and closed objects. Request examples under
 `examples/valid/` must validate; telemetry examples under `examples/invalid/`
 must fail validation.
 
+`checksums.json` is the publication digest of this version. It lists every
+machine-readable artifact — the manifest, the schemas and the examples — with
+its SHA-256. `README.md` is deliberately not covered, because a patch release
+may clarify prose without changing validation.
+
+A consumer that vendors this directory proves its copy is the published one by
+recomputing those digests. Nothing else is needed: no cloud package, no
+database, and no access to this repository at runtime.
+
+```bash
+uv run python scripts/publish_contract_checksums.py
+```
+
+That command regenerates the index. Because published v1.0 artifacts are
+immutable, a regenerated index that differs from the committed one means an
+artifact was edited, and `tests/contracts` fails.
+
 Compatibility rules:
 
 - the version is the exact string `1.0`;
