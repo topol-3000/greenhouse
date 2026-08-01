@@ -26,6 +26,10 @@ the target and are opened only when the current task needs them.
 - `control` owns the immutable `hysteresis-v1` `ControlLoop`, the pure policy,
   the idempotent `Command`, the loopback actuator boundary, and the
   source-independent ingestion path every producer offers telemetry on.
+- `agronomy` owns the generic catalog: `Crop`, the stable `GrowingRecipe`
+  identity, and the immutable published `RecipeVersion` with its single
+  `RecipeStage` and that stage's three `TargetRequirement` records. The whole
+  graph is created in one request or not at all.
 - `gateways` owns stable administrative gateway codes, operational gateway UUIDs,
   normalized site configuration, and additive one-owner logical-point
   authorization. Its management API is separate from the Edge data plane.
@@ -51,14 +55,18 @@ telemetry, the current-state projection, telemetry history, hysteresis
 control-loop configuration, the automation flow that turns an accepted
 temperature into a fan command, one same-origin dashboard page that reads what
 producers wrote, administrative HTTP provisioning of stable Edge gateways and
-their authorized logical points, and the Cloud ↔ Edge v1 telemetry and
-command-delivery API.
+their authorized logical points, the Cloud ↔ Edge v1 telemetry and
+command-delivery API, and the agronomy catalog of crops and immutable published
+recipe versions.
 
 Out of scope: executable environment simulation, cloud-owned demo or seed data,
 devices, MQTT, production authentication, users/RBAC/multi-tenancy, a frontend
 framework or build pipeline, distributed workers, WebSocket/SSE, a persisted
 event log, a dashboard aggregate endpoint, manual fan control, and any endpoint
-that creates a command.
+that creates a command. Of the agronomy domain, only the catalog exists: there
+is no `GrowCycle`, `GrowStageInstance` or `RuntimeTarget`, no recipe-driven
+automation, no recipe draft/edit workflow, no version 2, no second stage, and no
+cultivar or inventory.
 
 Executable environment simulation belongs to the independent
 `greenhouse-simulation-lab` repository: environment models, simulated time and
@@ -91,8 +99,14 @@ creates no Basil Growbox of its own.
 - The dashboard is a client of the public API. It adds no endpoint, takes the
   facility that is configured, renders only persisted state, and offers no
   lifecycle action: it is producer-independent and refreshes on a bounded poll.
-- Reuse constraints from `core/types.py`. Enum columns use `VARCHAR` plus a
-  `CHECK` through `enum_column`, never native PostgreSQL enums.
+- Reuse constraints from `core/types.py`. An entity whose code or label is
+  bounded differently builds its own annotation with `slug_type` or `name_type`
+  rather than redeclaring the pattern. Enum columns use `VARCHAR` plus a `CHECK`
+  through `enum_column`, never native PostgreSQL enums.
+- A published `RecipeVersion` and everything below it is immutable: no endpoint
+  updates or deletes one, and a recipe graph is written in one transaction or
+  not at all. A recipe states environmental requirements and never names a
+  facility, zone, loop, gateway, point or device.
 - Domain resources are archived rather than physically deleted.
 - Use type hints throughout and Google-style docstrings for Python modules,
   classes, and functions. Use modern Python syntax.

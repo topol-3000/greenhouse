@@ -22,6 +22,9 @@ CONTROL_ZONES_URL: str = "/api/v1/control-zones"
 POINTS_URL: str = "/api/v1/points"
 CONTROL_LOOPS_URL: str = "/api/v1/control-loops"
 COMMANDS_URL: str = "/api/v1/commands"
+CROPS_URL: str = "/api/v1/crops"
+GROWING_RECIPES_URL: str = "/api/v1/growing-recipes"
+RECIPE_VERSIONS_URL: str = "/api/v1/recipe-versions"
 
 DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     SITES_URL,
@@ -29,6 +32,8 @@ DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     CONTROL_ZONES_URL,
     POINTS_URL,
     CONTROL_LOOPS_URL,
+    CROPS_URL,
+    GROWING_RECIPES_URL,
 )
 """Every collection a client can reach. None of them accepts ``DELETE``."""
 
@@ -401,6 +406,122 @@ async def create_control_loop(
         CONTROL_LOOPS_URL,
         json=control_loop_body(growbox, **overrides),
     )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+BASIL_CROP: dict[str, Any] = {
+    "code": "basil",
+    "display_name": "Basil",
+    "scientific_name": "Ocimum basilicum",
+}
+"""One crop, provisioned over HTTP like everything else a test needs.
+
+Nothing in ``src`` knows these values. Basil is what these tests happen to
+grow, not something the cloud ships.
+"""
+
+VEGETATIVE_REQUIREMENTS: tuple[dict[str, Any], ...] = (
+    {
+        "metric_type": "air_temperature",
+        "requirement_kind": "range",
+        "min_value": 22,
+        "max_value": 26,
+        "unit": "°C",
+    },
+    {
+        "metric_type": "air_humidity",
+        "requirement_kind": "range",
+        "min_value": 55,
+        "max_value": 70,
+        "unit": "%",
+    },
+    {
+        "metric_type": "photoperiod",
+        "requirement_kind": "duration_per_day",
+        "target_value": 16,
+        "unit": "h/day",
+    },
+)
+"""The three requirements a publishable version carries, in submitted order."""
+
+
+async def create_crop(http_client: httpx.AsyncClient, **overrides: Any) -> dict[str, Any]:
+    """Register a crop and return its representation.
+
+    Args:
+        http_client: The client under test.
+        **overrides: Fields replacing the defaults of the request body.
+
+    Returns:
+        The decoded response body of the created crop.
+    """
+    response = await http_client.post(CROPS_URL, json=BASIL_CROP | overrides)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def requirement_bodies(**replacements: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the three requirements, replacing some of them by metric.
+
+    Args:
+        **replacements: Requirement bodies keyed by the ``metric_type`` they
+            replace. A replacement of ``{}`` removes the requirement, which is
+            how a missing metric is submitted.
+
+    Returns:
+        The requirement list, ready to be nested in a stage.
+    """
+    bodies: list[dict[str, Any]] = []
+    for requirement in VEGETATIVE_REQUIREMENTS:
+        replacement = replacements.get(requirement["metric_type"], requirement)
+        if replacement:
+            bodies.append(dict(replacement))
+    return bodies
+
+
+def recipe_body(crop_id: str, **overrides: Any) -> dict[str, Any]:
+    """Build the representative recipe creation body.
+
+    Args:
+        crop_id: The crop the recipe grows.
+        **overrides: Fields replacing the defaults at the top level of the
+            body, ``version`` included.
+
+    Returns:
+        The request body, ready to be posted.
+    """
+    return {
+        "crop_id": crop_id,
+        "code": "basil-default",
+        "name": "Default basil recipe",
+        "version": {
+            "version_number": 1,
+            "stage": {
+                "code": "vegetative",
+                "name": "Vegetative",
+                "requirements": requirement_bodies(),
+            },
+        },
+    } | overrides
+
+
+async def create_recipe(
+    http_client: httpx.AsyncClient,
+    crop_id: str,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Publish a recipe graph and return its representation.
+
+    Args:
+        http_client: The client under test.
+        crop_id: The crop the recipe grows.
+        **overrides: Fields replacing the defaults of the request body.
+
+    Returns:
+        The decoded response body of the created recipe.
+    """
+    response = await http_client.post(GROWING_RECIPES_URL, json=recipe_body(crop_id, **overrides))
     assert response.status_code == 201, response.text
     return response.json()
 
