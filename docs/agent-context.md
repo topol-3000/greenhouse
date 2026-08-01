@@ -30,6 +30,11 @@ the target and are opened only when the current task needs them.
   identity, and the immutable published `RecipeVersion` with its single
   `RecipeStage` and that stage's three `TargetRequirement` records. The whole
   graph is created in one request or not at all.
+- `cultivation` owns the operational half of agronomy: the `GrowCycle`
+  lifecycle, its one climate `GrowCycleZoneAssignment`, its single
+  `GrowStageInstance`, and the immutable temperature `RuntimeTarget` activation
+  snapshots from the recipe. It is the only module that names both a recipe and
+  a growbox, which is what keeps the catalog free of operational references.
 - `gateways` owns stable administrative gateway codes, operational gateway UUIDs,
   normalized site configuration, and additive one-owner logical-point
   authorization. Its management API is separate from the Edge data plane.
@@ -56,17 +61,21 @@ control-loop configuration, the automation flow that turns an accepted
 temperature into a fan command, one same-origin dashboard page that reads what
 producers wrote, administrative HTTP provisioning of stable Edge gateways and
 their authorized logical points, the Cloud ↔ Edge v1 telemetry and
-command-delivery API, and the agronomy catalog of crops and immutable published
-recipe versions.
+command-delivery API, the agronomy catalog of crops and immutable published
+recipe versions, and the grow cycle lifecycle that applies one such version to
+one climate zone and materializes its temperature `RuntimeTarget`.
 
 Out of scope: executable environment simulation, cloud-owned demo or seed data,
 devices, MQTT, production authentication, users/RBAC/multi-tenancy, a frontend
 framework or build pipeline, distributed workers, WebSocket/SSE, a persisted
 event log, a dashboard aggregate endpoint, manual fan control, and any endpoint
-that creates a command. Of the agronomy domain, only the catalog exists: there
-is no `GrowCycle`, `GrowStageInstance` or `RuntimeTarget`, no recipe-driven
-automation, no recipe draft/edit workflow, no version 2, no second stage, and no
-cultivar or inventory.
+that creates a command. Of the agronomy domain, the catalog and the cycle
+lifecycle exist and nothing consumes them: there is **no recipe-driven
+automation**, no `Command.runtime_target_id`, no telemetry-driven target
+resolution, no cycle pause/resume/reactivation, no stage advancement or second
+stage, no humidity/lighting/irrigation/photoperiod automation, no shared-zone
+target merging, no recipe draft/edit workflow, no version 2, and no cultivar or
+inventory.
 
 Executable environment simulation belongs to the independent
 `greenhouse-simulation-lab` repository: environment models, simulated time and
@@ -107,6 +116,18 @@ creates no Basil Growbox of its own.
   updates or deletes one, and a recipe graph is written in one transaction or
   not at all. A recipe states environmental requirements and never names a
   facility, zone, loop, gateway, point or device.
+- A `GrowCycle` references a version and never copies its numbers. Activation,
+  completion and abort each write the cycle, its stage instance and its runtime
+  target in one transaction on one shared timestamp, and repeating a transition
+  a cycle has already made is idempotent.
+- A `RuntimeTarget` is an immutable snapshot: its values and source links never
+  change, and the only mutation is setting `effective_to` once. At most one
+  target per `ControlLoop` has `effective_to IS NULL`, and the partial unique
+  index — not the service pre-check — is what enforces it. Concurrency lives in
+  PostgreSQL row locks and constraints; a process-local lock is never the
+  authority.
+- Nothing consumes a `RuntimeTarget`. Automation still evaluates the loop's own
+  thresholds, and activation neither reads telemetry nor creates a command.
 - Domain resources are archived rather than physically deleted.
 - Use type hints throughout and Google-style docstrings for Python modules,
   classes, and functions. Use modern Python syntax.

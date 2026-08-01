@@ -15,10 +15,12 @@ from ai_greenhouse.api.routes.dashboard import router as dashboard_router
 from ai_greenhouse.api.routes.edge import router as edge_router
 from ai_greenhouse.api.routes.facilities import router as facilities_router
 from ai_greenhouse.api.routes.gateways import router as gateways_router
+from ai_greenhouse.api.routes.grow_cycles import router as grow_cycles_router
 from ai_greenhouse.api.routes.growing_recipes import router as growing_recipes_router
 from ai_greenhouse.api.routes.health import router as health_router
 from ai_greenhouse.api.routes.points import router as points_router
 from ai_greenhouse.api.routes.recipe_versions import router as recipe_versions_router
+from ai_greenhouse.api.routes.runtime_targets import router as runtime_targets_router
 from ai_greenhouse.api.routes.sites import router as sites_router
 from ai_greenhouse.api.routes.telemetry import router as telemetry_router
 
@@ -46,3 +48,5 @@ api_v1_router.include_router(edge_router)
 api_v1_router.include_router(crops_router)
 api_v1_router.include_router(growing_recipes_router)
 api_v1_router.include_router(recipe_versions_router)
+api_v1_router.include_router(grow_cycles_router)
+api_v1_router.include_router(runtime_targets_router)
