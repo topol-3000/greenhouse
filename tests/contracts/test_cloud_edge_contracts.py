@@ -111,3 +111,14 @@ def test_contract_schema_vocabulary_has_no_producer_specific_fields() -> None:
     }
 
     assert not any("simulation" in key for key in schema_keys)
+
+
+def test_edge_contract_carries_no_cloud_runtime_target_provenance() -> None:
+    """The gateway receives actuator instructions, not cloud agronomy decisions."""
+    schema_keys = {
+        key
+        for schema_path in (CONTRACT_ROOT / "schemas").glob("*.json")
+        for key in property_names(load_json(schema_path.relative_to(CONTRACT_ROOT)))
+    }
+
+    assert "runtime_target_id" not in schema_keys

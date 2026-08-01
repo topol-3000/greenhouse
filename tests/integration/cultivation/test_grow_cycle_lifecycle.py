@@ -5,8 +5,8 @@ representation it returns: the guarantee is that the cycle, its stage instance
 and its runtime target move together, and a response alone cannot show that.
 
 Activation is also asserted by what it does *not* do. No command is written and
-no telemetry is read: the control loop still evaluates its own thresholds, and
-the runtime target is persisted for a consumer that does not exist yet.
+no telemetry is read. The target is consumed only when a later accepted current
+temperature reaches the existing automation path.
 
 Three refusals here are reached by editing a row directly rather than through an
 endpoint. That is deliberate and it is the point of them: the catalog offers no
@@ -159,7 +159,7 @@ async def test_the_control_loop_is_left_exactly_as_it_was_configured(
     environment: CycleEnvironment,
     planned: dict[str, Any],
 ) -> None:
-    """Automation is unchanged: the loop still evaluates the band it was created with."""
+    """Activation adds a target without copying its bounds back into the loop."""
     await activate_grow_cycle(http_client, planned["id"])
 
     loop = await http_client.get(f"{CONTROL_LOOPS_URL}/{environment.control_loop['id']}")

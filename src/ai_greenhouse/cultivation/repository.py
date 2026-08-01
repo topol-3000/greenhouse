@@ -429,6 +429,30 @@ class RuntimeTargetRepository:
         """
         return await self._session.get(RuntimeTarget, runtime_target_id)
 
+    async def get_active_for_evaluation(self, control_loop_id: UUID) -> RuntimeTarget | None:
+        """Load and hold the loop's active target for one control evaluation.
+
+        The query deliberately uses transaction-time state: ``observed_at`` is
+        not part of target selection. ``FOR SHARE`` prevents the lifecycle from
+        closing the selected row between resolution and command persistence,
+        while still allowing concurrent readers.
+
+        Args:
+            control_loop_id: The loop currently being evaluated.
+
+        Returns:
+            The row whose ``effective_to`` is null, or ``None`` when the loop
+            has no active target.
+        """
+        return await self._session.scalar(
+            select(RuntimeTarget)
+            .where(
+                RuntimeTarget.control_loop_id == control_loop_id,
+                RuntimeTarget.effective_to.is_(None),
+            )
+            .with_for_update(read=True)
+        )
+
     async def list_history(
         self,
         *,

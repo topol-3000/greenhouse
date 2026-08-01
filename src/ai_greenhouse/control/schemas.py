@@ -98,6 +98,7 @@ class CommandRead(BaseModel):
     id: UUID
     idempotency_key: str
     control_loop_id: UUID
+    runtime_target_id: UUID | None
     trigger_sample_id: UUID
     target_point_id: UUID
     reported_point_id: UUID

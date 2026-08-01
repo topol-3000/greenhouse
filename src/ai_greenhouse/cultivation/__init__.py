@@ -6,8 +6,8 @@ other half of that separation: it is the only place where generic agronomy and
 concrete topology meet, and it holds every operational reference the catalog
 refuses.
 
-Nothing here consumes a :class:`~ai_greenhouse.cultivation.models.RuntimeTarget`
-yet. Activation persists the temperature band a running cycle asks for and
-stops there: automation still evaluates the control loop's own thresholds, and
-turning a target into a decision is a separate step.
+Activation persists the temperature band a running cycle asks for and stops
+there: it reads no telemetry and creates no command. The control module consumes
+the active snapshot only when a later accepted current temperature reaches the
+existing automation path.
 """

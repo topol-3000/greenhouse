@@ -352,8 +352,9 @@ class RuntimeTarget(UUIDPrimaryKeyMixin, Base):
     kept anyway, so the snapshot can still be traced back to the requirement it
     came from.
 
-    Nothing consumes this row yet. The automation flow still evaluates the
-    control loop's own thresholds, and no ``Command`` refers to a target.
+    While this row is active, the existing automation flow uses its snapshot
+    bounds before falling back to the control loop's immutable thresholds. A
+    command decided from it retains its identifier as provenance.
 
     Attributes:
         control_loop_id: The loop the band applies to. ``ON DELETE RESTRICT``.

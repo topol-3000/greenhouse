@@ -69,6 +69,9 @@ not at either end of it.
 REVISION_BEFORE_SIMULATION_REMOVAL: str = "20260731_0014"
 """The last revision whose schema still carries the simulation domain."""
 
+UNIT_2_REVISION: str = "20260801_0017"
+"""The schema immediately before command RuntimeTarget provenance."""
+
 
 def run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProcess[str]:
     """Run one Alembic command against the given database.
@@ -154,6 +157,19 @@ async def column_names(database_url: str, table: str) -> set[str]:
                 {"table": table},
             )
             return set(names)
+    finally:
+        await engine.dispose()
+
+
+async def command_runtime_target(database_url: str, command_id: UUID) -> UUID | None:
+    """Read one command's nullable provenance at a schema that carries it."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            return await connection.scalar(
+                text("SELECT runtime_target_id FROM commands WHERE id = :command_id"),
+                {"command_id": command_id},
+            )
     finally:
         await engine.dispose()
 
@@ -462,6 +478,27 @@ async def test_every_migration_downgrades_back_to_an_empty_database(
     assert EXPECTED_TABLES <= await table_names(scratch_database)
 
 
+async def test_command_provenance_round_trips_to_the_unit_2_schema(
+    scratch_database: str,
+) -> None:
+    """Upgrade, downgrade to Unit 2, and re-upgrade preserve the focused delta."""
+    assert run_alembic(scratch_database, "upgrade", UNIT_2_REVISION).returncode == 0
+    assert "runtime_target_id" not in await column_names(scratch_database, "commands")
+
+    upgrade = run_alembic(scratch_database, "upgrade", "head")
+    after_upgrade = await column_names(scratch_database, "commands")
+    downgrade = run_alembic(scratch_database, "downgrade", UNIT_2_REVISION)
+    after_downgrade = await column_names(scratch_database, "commands")
+    upgrade_again = run_alembic(scratch_database, "upgrade", "head")
+
+    assert upgrade.returncode == 0, upgrade.stderr
+    assert "runtime_target_id" in after_upgrade
+    assert downgrade.returncode == 0, downgrade.stderr
+    assert "runtime_target_id" not in after_downgrade
+    assert upgrade_again.returncode == 0, upgrade_again.stderr
+    assert "runtime_target_id" in await column_names(scratch_database, "commands")
+
+
 async def test_the_schema_at_head_carries_no_simulation_object(
     scratch_database: str,
 ) -> None:
@@ -509,10 +546,12 @@ async def test_removing_the_simulation_domain_preserves_recorded_data(
     upgrade_again = run_alembic(scratch_database, "upgrade", "head")
 
     assert upgrade.returncode == 0, upgrade.stderr
+    assert await command_runtime_target(scratch_database, COMMAND_ID) is None
     assert downgrade.returncode == 0, downgrade.stderr
     assert upgrade_again.returncode == 0, upgrade_again.stderr
     assert preserved == EXPECTED_RECORDED_DATA
     assert after_downgrade == EXPECTED_RECORDED_DATA
     assert await recorded_data(scratch_database) == EXPECTED_RECORDED_DATA
+    assert await command_runtime_target(scratch_database, COMMAND_ID) is None
     assert "simulation_run_id" not in await column_names(scratch_database, "telemetry_samples")
     assert run_alembic(scratch_database, "check").returncode == 0

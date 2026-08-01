@@ -22,13 +22,19 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from ai_greenhouse.control.actuator import ActuationRequest
 from ai_greenhouse.control.automation import IngestionResult, TelemetryIngestionService
+from ai_greenhouse.cultivation.repository import RuntimeTargetRepository
 from ai_greenhouse.points.models import DataQuality
 from ai_greenhouse.telemetry.schemas import TelemetrySampleRecord, TelemetryWriteOutcome
 from tests.integration.factories import (
+    GROW_CYCLES_URL,
     AutomationGrowbox,
+    CycleEnvironment,
+    activate_grow_cycle,
     count_rows,
     create_automation_growbox,
     create_control_loop,
+    create_cycle_environment,
+    create_grow_cycle,
 )
 
 OBSERVED_AT: datetime = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
@@ -158,6 +164,21 @@ async def wired(http_client: httpx.AsyncClient) -> AutomationGrowbox:
     return growbox
 
 
+@pytest.fixture
+async def recipe_driven(
+    http_client: httpx.AsyncClient,
+) -> tuple[CycleEnvironment, dict[str, Any]]:
+    """Activate a 22–26 °C target over deliberately different 20–30 °C legacy bounds."""
+    environment = await create_cycle_environment(
+        http_client,
+        lower_threshold=20,
+        upper_threshold=30,
+    )
+    cycle = await create_grow_cycle(http_client, environment)
+    activated = await activate_grow_cycle(http_client, cycle["id"])
+    return environment, activated["active_runtime_target"]
+
+
 async def test_a_temperature_above_the_band_switches_the_fan_on(
     wired: AutomationGrowbox,
     session: AsyncSession,
@@ -170,10 +191,217 @@ async def test_a_temperature_above_the_band_switches_the_fan_on(
     assert result.outcome is TelemetryWriteOutcome.RECORDED_CURRENT
     assert result.command is not None
     assert result.command.desired_value is True
+    assert result.command.runtime_target_id is None
     assert result.command.executed_at == EXECUTED_AT
     assert await state_value(connection, wired.points["fan_power"]["id"]) is True
     assert await state_value(connection, wired.points["fan_running"]["id"]) is True
     assert await count_rows(connection, "commands") == 1
+
+
+async def test_active_target_precedence_drives_the_complete_recipe_sequence(
+    recipe_driven: tuple[CycleEnvironment, dict[str, Any]],
+    session: AsyncSession,
+    connection: AsyncConnection,
+    http_client: httpx.AsyncClient,
+) -> None:
+    """Different legacy bounds prove ``27 → 24 → 21`` used the 22–26 target."""
+    environment, target = recipe_driven
+    service = ingestion(session)
+    decisions: list[bool | None] = []
+    provenance: list[UUID | None] = []
+
+    for offset, value in enumerate((27.0, 24.0, 21.0)):
+        result = await service.ingest(
+            temperature(
+                environment.growbox,
+                value,
+                observed_at=OBSERVED_AT + timedelta(minutes=offset),
+                received_at=OBSERVED_AT + timedelta(minutes=offset),
+            )
+        )
+        decisions.append(None if result.command is None else result.command.desired_value)
+        provenance.append(None if result.command is None else result.command.runtime_target_id)
+    await session.commit()
+
+    target_id = UUID(target["id"])
+    commands = (
+        await http_client.get(
+            "/api/v1/commands",
+            params={"control_loop_id": environment.control_loop["id"]},
+        )
+    ).json()["items"]
+
+    assert decisions == [True, None, False]
+    assert provenance == [target_id, None, target_id]
+    assert [command["desired_value"] for command in commands] == [False, True]
+    assert {command["runtime_target_id"] for command in commands} == {target["id"]}
+    assert await count_rows(connection, "commands") == 2
+
+
+@pytest.mark.parametrize(
+    ("value", "prime_fan_on"),
+    [
+        pytest.param(22.0, True, id="lower bound keeps an on fan on"),
+        pytest.param(26.0, False, id="upper bound keeps an off fan off"),
+    ],
+)
+async def test_exact_runtime_target_boundaries_create_no_command(
+    value: float,
+    prime_fan_on: bool,
+    recipe_driven: tuple[CycleEnvironment, dict[str, Any]],
+    session: AsyncSession,
+    connection: AsyncConnection,
+) -> None:
+    """Both Decimal boundaries belong to the no-op band."""
+    environment, _ = recipe_driven
+    service = ingestion(session)
+    baseline = 0
+    if prime_fan_on:
+        priming = await service.ingest(temperature(environment.growbox, 27.0))
+        assert priming.command is not None
+        baseline = 1
+
+    result = await service.ingest(
+        temperature(
+            environment.growbox,
+            value,
+            observed_at=OBSERVED_AT + timedelta(minutes=1),
+            received_at=OBSERVED_AT + timedelta(minutes=1),
+        )
+    )
+    await session.commit()
+
+    assert result.command is None
+    assert await count_rows(connection, "commands") == baseline
+
+
+async def test_closing_a_target_restores_legacy_bounds_without_rewriting_history(
+    recipe_driven: tuple[CycleEnvironment, dict[str, Any]],
+    session: AsyncSession,
+    connection: AsyncConnection,
+    http_client: httpx.AsyncClient,
+) -> None:
+    """A closed 22–26 target is ignored; later decisions use 20–30 with null provenance."""
+    environment, target = recipe_driven
+    service = ingestion(session)
+    target_decision = await service.ingest(temperature(environment.growbox, 27.0))
+    await session.commit()
+    assert target_decision.command is not None
+    target_command_id = target_decision.command.id
+
+    cycles = await http_client.get(GROW_CYCLES_URL, params={"code": "basil-demo-cycle"})
+    cycle_id = cycles.json()["items"][0]["id"]
+    completed = await http_client.post(f"{GROW_CYCLES_URL}/{cycle_id}/complete")
+    assert completed.status_code == 200, completed.text
+
+    inside_legacy = await service.ingest(
+        temperature(
+            environment.growbox,
+            21.0,
+            observed_at=OBSERVED_AT + timedelta(minutes=1),
+            received_at=OBSERVED_AT + timedelta(minutes=1),
+        )
+    )
+    fallback = await service.ingest(
+        temperature(
+            environment.growbox,
+            19.0,
+            observed_at=OBSERVED_AT + timedelta(minutes=2),
+            received_at=OBSERVED_AT + timedelta(minutes=2),
+        )
+    )
+    await session.commit()
+
+    historical = (await http_client.get(f"/api/v1/commands/{target_command_id}")).json()
+    closed_target = (await http_client.get(f"/api/v1/runtime-targets/{target['id']}")).json()
+
+    assert inside_legacy.command is None
+    assert fallback.command is not None
+    assert fallback.command.desired_value is False
+    assert fallback.command.runtime_target_id is None
+    assert historical["runtime_target_id"] == target["id"]
+    assert closed_target["effective_to"] is not None
+    assert await count_rows(connection, "commands") == 2
+
+
+async def test_target_driven_duplicate_and_late_samples_do_not_decide_again(
+    recipe_driven: tuple[CycleEnvironment, dict[str, Any]],
+    session: AsyncSession,
+    connection: AsyncConnection,
+) -> None:
+    """The existing trigger identity and current-state gate remain authoritative."""
+    environment, target = recipe_driven
+    service = ingestion(session)
+    trigger = temperature(environment.growbox, 27.0)
+
+    first = await service.ingest(trigger)
+    duplicate = await service.ingest(trigger)
+    late = await service.ingest(
+        temperature(
+            environment.growbox,
+            19.0,
+            observed_at=OBSERVED_AT - timedelta(minutes=1),
+        )
+    )
+    await session.commit()
+
+    assert first.command is not None
+    assert first.command.runtime_target_id == UUID(target["id"])
+    assert duplicate.outcome is TelemetryWriteOutcome.DUPLICATE
+    assert duplicate.command is None
+    assert late.outcome is TelemetryWriteOutcome.OUT_OF_ORDER
+    assert late.command is None
+    assert await count_rows(connection, "commands") == 1
+
+
+async def test_command_provenance_restricts_deleting_its_runtime_target(
+    recipe_driven: tuple[CycleEnvironment, dict[str, Any]],
+    session: AsyncSession,
+    connection: AsyncConnection,
+) -> None:
+    """PostgreSQL preserves a target once command history points to it."""
+    environment, target = recipe_driven
+    result = await ingestion(session).ingest(temperature(environment.growbox, 27.0))
+    await session.commit()
+    assert result.command is not None
+
+    with pytest.raises(IntegrityError):
+        async with connection.begin_nested():
+            await connection.execute(
+                text("DELETE FROM runtime_targets WHERE id = :target_id"),
+                {"target_id": UUID(target["id"])},
+            )
+
+
+async def test_invalid_active_target_fails_without_legacy_fallback(
+    recipe_driven: tuple[CycleEnvironment, dict[str, Any]],
+    session: AsyncSession,
+    connection: AsyncConnection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The accepted temperature remains, but corrupt active bounds produce no command."""
+    environment, _ = recipe_driven
+    original = RuntimeTargetRepository.get_active_for_evaluation
+
+    async def corrupt_target(
+        repository: RuntimeTargetRepository,
+        control_loop_id: UUID,
+    ) -> object:
+        target = await original(repository, control_loop_id)
+        assert target is not None
+        target.unit = "%"
+        return target
+
+    monkeypatch.setattr(RuntimeTargetRepository, "get_active_for_evaluation", corrupt_target)
+
+    result = await ingestion(session).ingest(temperature(environment.growbox, 27.0))
+    await session.commit()
+
+    assert result.outcome is TelemetryWriteOutcome.RECORDED_CURRENT
+    assert result.automation_failed is True
+    assert result.command is None
+    assert await count_rows(connection, "telemetry_samples") == 1
+    assert await count_rows(connection, "commands") == 0
 
 
 async def test_the_documented_scenario_switches_on_holds_and_switches_off(

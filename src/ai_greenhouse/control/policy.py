@@ -5,6 +5,7 @@ part of automation that has to be obvious on inspection and cheap to check at
 every boundary, so it is kept apart from everything that persists its result.
 """
 
+from decimal import Decimal
 from enum import StrEnum
 
 
@@ -21,9 +22,9 @@ class FanAction(StrEnum):
 
 def evaluate_hysteresis(
     *,
-    temperature: float,
-    lower_threshold: float,
-    upper_threshold: float,
+    temperature: Decimal,
+    lower_threshold: Decimal,
+    upper_threshold: Decimal,
     fan_is_on: bool,
 ) -> FanAction | None:
     """Decide what a temperature should do to a fan that is in a known state.
