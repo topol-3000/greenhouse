@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # Without this, autogenerate and `alembic check` compare the database against
 # an empty metadata and report no changes. Every new module's models.py must be
 # added here.
+from ai_greenhouse.agronomy import models as agronomy_models  # noqa: F401
 from ai_greenhouse.control import models as control_models  # noqa: F401
 from ai_greenhouse.core.config import get_settings
 from ai_greenhouse.edge import models as edge_models  # noqa: F401

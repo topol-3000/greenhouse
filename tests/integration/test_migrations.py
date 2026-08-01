@@ -49,6 +49,11 @@ EXPECTED_TABLES: set[str] = {
     "gateways",
     "gateway_points",
     "edge_telemetry_messages",
+    "crops",
+    "growing_recipes",
+    "recipe_versions",
+    "recipe_stages",
+    "target_requirements",
 }
 """Every table the schema at ``head`` carries; ``downgrade`` must remove them all.
 

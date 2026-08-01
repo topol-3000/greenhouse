@@ -19,6 +19,11 @@ persisted result: the current temperature, humidity and fan state of the
 configured facility, its recent temperature history, and the commands the
 control loop applied.
 
+Alongside the growbox, the cloud owns the first agronomy catalog: crops, and
+growing recipes whose published versions state the environment a crop asks for.
+A published version is immutable and describes requirements only — it names no
+facility, zone, loop or device, and nothing yet runs against it.
+
 The cloud creates no data of its own. A clean deployment starts with empty
 domain tables and stays that way until a client provisions a facility through
 the public APIs, and every measurement comes from an external producer — real
@@ -1062,13 +1067,191 @@ Rules worth knowing before calling it:
 | `limit` outside `1..1000` | 422 | `validation_error` |
 | Command does not exist | 404 | `command_not_found` |
 
+## Crops API
+
+A crop is what is grown, as a generic catalog entry: it belongs to no site, and
+recipes are written against it.
+
+```http
+POST /api/v1/crops
+GET  /api/v1/crops?code=&limit=&offset=
+GET  /api/v1/crops/{crop_id}
+```
+
+```bash
+curl -X POST http://localhost:8000/api/v1/crops \
+  -H 'content-type: application/json' \
+  -d '{"code": "basil", "display_name": "Basil",
+       "scientific_name": "Ocimum basilicum"}'
+```
+
+```json
+{
+  "id": "0d2f5f6b-2d0a-4a17-9d63-4b2fbbd9c2f1",
+  "code": "basil",
+  "display_name": "Basil",
+  "scientific_name": "Ocimum basilicum",
+  "status": "active",
+  "created_at": "2026-08-01T10:14:02.113204Z"
+}
+```
+
+Rules worth knowing before calling it:
+
+- `code` is a slug of 1–64 characters, unique across the whole catalog and fixed
+  once the crop exists;
+- `display_name` is stripped and must be 1–120 characters afterwards;
+  `scientific_name` is optional and at most 160;
+- `status` is not accepted on creation: a crop that has just been registered is
+  active;
+- there is **no `PATCH` and no `DELETE`**. Recipes are written against a crop,
+  so renaming or removing one would change what every recipe below it refers to.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unknown field | 422 | `validation_error` |
+| Crop does not exist | 404 | `crop_not_found` |
+| `code` already taken | 409 | `crop_code_exists` |
+
+## Growing recipes API
+
+A growing recipe is the stable identity of one way of growing a crop. What it
+asks for lives in an immutable **published version**, which carries one stage and
+that stage's target requirements. Creating a recipe creates the whole graph in
+one transaction: identity, version 1, its stage, and its three requirements.
+
+A recipe describes an **environment only**. Nothing in it names a facility, a
+zone, a control loop, a gateway, a point or a device, which is what lets one
+recipe be applied to any growbox.
+
+```http
+POST /api/v1/growing-recipes
+GET  /api/v1/growing-recipes?code=&crop_id=&limit=&offset=
+GET  /api/v1/growing-recipes/{recipe_id}
+GET  /api/v1/recipe-versions/{recipe_version_id}
+```
+
+```bash
+curl -X POST http://localhost:8000/api/v1/growing-recipes \
+  -H 'content-type: application/json' \
+  -d '{"crop_id": "0d2f5f6b-2d0a-4a17-9d63-4b2fbbd9c2f1",
+       "code": "basil-default", "name": "Default basil recipe",
+       "version": {"version_number": 1, "stage": {
+         "code": "vegetative", "name": "Vegetative", "requirements": [
+           {"metric_type": "air_temperature", "requirement_kind": "range",
+            "min_value": 22, "max_value": 26, "unit": "°C"},
+           {"metric_type": "air_humidity", "requirement_kind": "range",
+            "min_value": 55, "max_value": 70, "unit": "%"},
+           {"metric_type": "photoperiod", "requirement_kind": "duration_per_day",
+            "target_value": 16, "unit": "h/day"}]}}}'
+```
+
+Both reads answer with the complete graph, so nothing needs a second request or
+database knowledge to display a recipe:
+
+```json
+{
+  "id": "6b0a6d29-9a5f-4d1e-9b57-6a3c58ad1f22",
+  "crop_id": "0d2f5f6b-2d0a-4a17-9d63-4b2fbbd9c2f1",
+  "code": "basil-default",
+  "name": "Default basil recipe",
+  "status": "active",
+  "created_at": "2026-08-01T10:16:40.512883Z",
+  "version": {
+    "id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
+    "recipe_id": "6b0a6d29-9a5f-4d1e-9b57-6a3c58ad1f22",
+    "version_number": 1,
+    "status": "published",
+    "published_at": "2026-08-01T10:16:40.512901Z",
+    "created_at": "2026-08-01T10:16:40.512901Z",
+    "stage": {
+      "id": "3f5c1e77-88a1-4f2b-b0c6-2e9d7a1b4c30",
+      "recipe_version_id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
+      "code": "vegetative",
+      "name": "Vegetative",
+      "sequence_number": 1,
+      "requirements": [
+        {"id": "…", "recipe_stage_id": "…", "metric_type": "air_humidity",
+         "requirement_kind": "range", "unit": "%",
+         "min_value": 55.0, "max_value": 70.0, "target_value": null},
+        {"id": "…", "recipe_stage_id": "…", "metric_type": "air_temperature",
+         "requirement_kind": "range", "unit": "°C",
+         "min_value": 22.0, "max_value": 26.0, "target_value": null},
+        {"id": "…", "recipe_stage_id": "…", "metric_type": "photoperiod",
+         "requirement_kind": "duration_per_day", "unit": "h/day",
+         "min_value": null, "max_value": null, "target_value": 16.0}
+      ]
+    }
+  }
+}
+```
+
+Rules worth knowing before calling it:
+
+- the recipe `code` is a slug of 1–80 characters, unique across the catalog and
+  fixed; the identity carries no agronomic value at all;
+- **a published version is immutable.** There is no `PATCH` and no `DELETE` for a
+  recipe, a version, a stage or a requirement, and no endpoint that adds a
+  version to an existing recipe. Drafts, version 2, cloning and deprecation are
+  not implemented;
+- `version_number` is `1`, the single stage's `code` is `vegetative` and its
+  `sequence_number` is `1`;
+- a version carries **exactly three** requirements, one per metric, in these
+  combinations and no others:
+
+| `metric_type` | `requirement_kind` | Values | `unit` |
+| --- | --- | --- | --- |
+| `air_temperature` | `range` | `min_value` < `max_value` | `°C` |
+| `air_humidity` | `range` | `min_value` < `max_value` | `%` |
+| `photoperiod` | `duration_per_day` | `0 < target_value <= 24` | `h/day` |
+
+- a `range` forbids `target_value`; a `duration_per_day` forbids `min_value` and
+  `max_value`. Values are decimals — `Infinity` and `NaN` are refused — and are
+  returned as JSON numbers;
+- requirements come back ordered by `metric_type`, and both list endpoints page
+  deterministically by `created_at ASC, id ASC`;
+- the graph is **atomic**: a rejected requirement leaves no recipe, no version
+  and no stage behind. The database enforces the same invariants independently —
+  unique codes, one requirement per `(stage, metric)`, and a check that ties each
+  requirement's values to its kind.
+
+| Situation | HTTP | `error.code` |
+| --- | --- | --- |
+| Invalid request body or unknown field | 422 | `validation_error` |
+| Wrong version number, stage, requirement set, combination or value | 422 | `invalid_recipe_version` |
+| `crop_id` references no crop | 404 | `crop_not_found` |
+| Recipe does not exist | 404 | `recipe_not_found` |
+| Version does not exist | 404 | `recipe_version_not_found` |
+| `code` already taken | 409 | `recipe_code_exists` |
+
+The reason a version was refused is named in `details.reason`, for example
+`unsupported_metric_type`, `duplicate_metric_type`, `missing_metric_type`,
+`invalid_range` or `invalid_duration`:
+
+```json
+{
+  "error": {
+    "code": "invalid_recipe_version",
+    "message": "The submitted recipe version is not valid",
+    "details": {"reason": "missing_metric_type", "metric_types": ["photoperiod"]}
+  }
+}
+```
+
 ## Boundaries
 
 The cloud owns the domain APIs and none of the data reachable through them: it
-creates no site, facility, zone, point, gateway, telemetry sample or command of
-its own, at startup or anywhere else. The following are not part of the system:
+creates no site, facility, zone, point, gateway, telemetry sample, command, crop
+or recipe of its own, at startup or anywhere else. The following are not part of
+the system:
 
-- no seed, demo dataset, bootstrap command or startup fixture;
+- no seed, demo dataset, bootstrap command or startup fixture. There is no
+  cloud-owned Basil crop and no cloud-owned recipe;
+- no grow cycle, stage instance or runtime target, and no recipe-driven
+  automation: a control loop carries its own thresholds and reads no recipe;
+- no recipe draft, edit, version 2, cloning, publishing transition or
+  deprecation, no stage duration or advancement, and no second stage;
+- no cultivar, inventory or generic policy/rules engine;
 - no executable environment simulation, simulated time or virtual device: that
   is `greenhouse-simulation-lab`, which reaches this application only as an
   ordinary HTTP client;
@@ -1215,6 +1398,7 @@ src/ai_greenhouse/
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
 ├── control/             # Hysteresis loops, commands and the actuator boundary
+├── agronomy/            # Crops and immutable published growing-recipe versions
 ├── gateways/            # Stable gateway identities and point authorization
 ├── edge/                # The Cloud ↔ Edge v1 telemetry and command adapter
 └── infrastructure/
