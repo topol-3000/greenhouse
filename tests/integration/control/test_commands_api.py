@@ -21,6 +21,16 @@ async def test_an_unknown_command_is_reported_missing(http_client: httpx.AsyncCl
     assert response.json()["error"]["code"] == "command_not_found"
 
 
+async def test_command_provenance_cannot_be_mutated(http_client: httpx.AsyncClient) -> None:
+    """Runtime-target provenance is automation-owned and commands remain read-only."""
+    response = await http_client.patch(
+        f"{COMMANDS_URL}/{uuid4()}",
+        json={"runtime_target_id": str(uuid4())},
+    )
+
+    assert response.status_code == 405, response.text
+
+
 @pytest.mark.parametrize(
     "limit",
     [pytest.param(0, id="below the lower bound"), pytest.param(1001, id="above the upper bound")],

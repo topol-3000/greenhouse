@@ -24,8 +24,10 @@ the target and are opened only when the current task needs them.
 - `telemetry` owns append-only `TelemetrySample` persistence, the idempotent
   write boundary, current-state projection updates, and read-only history.
 - `control` owns the immutable `hysteresis-v1` `ControlLoop`, the pure policy,
-  the idempotent `Command`, the loopback actuator boundary, and the
-  source-independent ingestion path every producer offers telemetry on.
+  transaction-time effective temperature-bound resolution, the idempotent
+  `Command` with nullable RuntimeTarget provenance, the loopback actuator
+  boundary, and the source-independent ingestion path every producer offers
+  telemetry on.
 - `agronomy` owns the generic catalog: `Crop`, the stable `GrowingRecipe`
   identity, and the immutable published `RecipeVersion` with its single
   `RecipeStage` and that stage's three `TargetRequirement` records. The whole
@@ -63,18 +65,18 @@ producers wrote, administrative HTTP provisioning of stable Edge gateways and
 their authorized logical points, the Cloud ↔ Edge v1 telemetry and
 command-delivery API, the agronomy catalog of crops and immutable published
 recipe versions, and the grow cycle lifecycle that applies one such version to
-one climate zone and materializes its temperature `RuntimeTarget`.
+one climate zone, materializes its temperature `RuntimeTarget`, and lets the
+existing automation path consume that snapshot while it is active.
 
 Out of scope: executable environment simulation, cloud-owned demo or seed data,
 devices, MQTT, production authentication, users/RBAC/multi-tenancy, a frontend
 framework or build pipeline, distributed workers, WebSocket/SSE, a persisted
 event log, a dashboard aggregate endpoint, manual fan control, and any endpoint
-that creates a command. Of the agronomy domain, the catalog and the cycle
-lifecycle exist and nothing consumes them: there is **no recipe-driven
-automation**, no `Command.runtime_target_id`, no telemetry-driven target
-resolution, no cycle pause/resume/reactivation, no stage advancement or second
-stage, no humidity/lighting/irrigation/photoperiod automation, no shared-zone
-target merging, no recipe draft/edit workflow, no version 2, and no cultivar or
+that creates a command. Recipe-driven automation covers only the active
+temperature RuntimeTarget and existing `hysteresis-v1` path. There is no cycle
+pause/resume/reactivation, no stage advancement or second stage, no
+humidity/lighting/irrigation/photoperiod automation, no shared-zone target
+merging, no recipe draft/edit workflow, no version 2, and no cultivar or
 inventory.
 
 Executable environment simulation belongs to the independent
@@ -126,8 +128,11 @@ creates no Basil Growbox of its own.
   index — not the service pre-check — is what enforces it. Concurrency lives in
   PostgreSQL row locks and constraints; a process-local lock is never the
   authority.
-- Nothing consumes a `RuntimeTarget`. Automation still evaluates the loop's own
-  thresholds, and activation neither reads telemetry nor creates a command.
+- Automation resolves one effective temperature source per accepted current
+  sample: the active `RuntimeTarget` takes precedence, otherwise the loop's
+  immutable thresholds are the legacy fallback. Target-derived Commands keep
+  its ID; fallback Commands keep null. Activation itself still neither reads
+  telemetry nor creates a command, and the Edge v1 envelope carries no target.
 - Domain resources are archived rather than physically deleted.
 - Use type hints throughout and Google-style docstrings for Python modules,
   classes, and functions. Use modern Python syntax.

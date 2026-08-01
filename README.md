@@ -1033,6 +1033,7 @@ curl 'http://localhost:8000/api/v1/commands?control_loop_id=e03c6179-2f50-4cb4-d
       "id": "2fbf6c2f-3ed5-5207-b1e5-069f900506a0",
       "idempotency_key": "hysteresis-v1:e03c6179-2f50-4cb4-d8ea-1b46094253af:08cfcf34-39d1-5052-b4ca-964cc1d0e0ee:off",
       "control_loop_id": "e03c6179-2f50-4cb4-d8ea-1b46094253af",
+      "runtime_target_id": null,
       "trigger_sample_id": "08cfcf34-39d1-5052-b4ca-964cc1d0e0ee",
       "target_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
       "desired_value": false,
@@ -1053,6 +1054,9 @@ Rules worth knowing before calling it:
   total. `limit` defaults to `100` and must be between `1` and `1000`;
 - a command is created only when a *new* sample became the point's current
   state. A re-delivered or late measurement changes nothing and decides nothing;
+- `runtime_target_id` names the active target whose snapshot bounds produced
+  the decision. It is `null` when the loop's legacy thresholds were used and is
+  never included in the Cloud ↔ Edge v1 command envelope;
 - `idempotency_key` is
   `hysteresis-v1:{control_loop_id}:{trigger_sample_id}:{on|off}` and is unique.
   It is what bounds two concurrent evaluations of one measurement to one action;
@@ -1352,8 +1356,8 @@ Rules worth knowing before calling it:
   rolls back whole — its cycle stays `planned`, with no stage instance and no
   target;
 - **activation creates no command and reads no telemetry.** The runtime target
-  is persisted and readable; nothing consumes it yet, and the control loop still
-  evaluates its own thresholds;
+  is persisted and readable; only a later accepted current temperature can
+  consume it through the existing automation path;
 - there is **no `PATCH` and no `DELETE`**. Every change a cycle allows is one of
   the three transitions above.
 
@@ -1385,9 +1389,12 @@ recipe requirement rather than read through it, so a finished cycle still says
 what it was actually run against even if the catalog around it is archived
 later.
 
-**Nothing consumes a runtime target yet.** Automation is unchanged: the
-`hysteresis-v1` loop still evaluates its own configured thresholds, no command
-refers to a target, and recipe-driven automation is not implemented.
+For each accepted current temperature, automation resolves the active target by
+`control_loop_id` and `effective_to IS NULL`. Its exact Decimal snapshot bounds
+take precedence; when none exists, the loop's immutable thresholds remain the
+legacy fallback. Target-derived commands retain `runtime_target_id`. This
+boundary is recorded in
+[`docs/decisions/0001-recipe-runtime-target-control-boundary.md`](docs/decisions/0001-recipe-runtime-target-control-boundary.md).
 
 ```http
 GET /api/v1/runtime-targets?control_loop_id=&active=&limit=
@@ -1434,12 +1441,8 @@ not part of the system:
 
 - no seed, demo dataset, bootstrap command or startup fixture. There is no
   cloud-owned Basil crop, recipe or grow cycle;
-- **no recipe-driven automation.** A grow cycle materializes a `RuntimeTarget`
-  and nothing reads it: the `hysteresis-v1` loop still evaluates its own
-  configured thresholds, no `Command` refers to a target, and no accepted
-  temperature sample is resolved against one;
-- no `runtime_target_id` on a command, no telemetry-driven target resolution and
-  no hysteresis evaluation against a recipe band;
+- no recipe-driven automation beyond the one active `air_temperature`
+  RuntimeTarget consumed by the existing `hysteresis-v1` path;
 - no cycle pause, resume or reactivation, no stage advancement and no second
   stage instance: M5 runs one stage per cycle;
 - no humidity, lighting, irrigation or photoperiod automation, and no

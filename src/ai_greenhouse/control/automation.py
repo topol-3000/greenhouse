@@ -4,7 +4,8 @@ This module is where the milestone's one product claim lives — that the flow i
 the same whichever producer supplied the measurement. It therefore knows nothing
 about gateways, drivers or HTTP: it is handed a sample that the telemetry
 boundary has already accepted as the point's current state, and everything it
-does from there depends on the loop configuration and the sample alone.
+does from there depends on that sample and the loop's one resolved effective
+temperature source.
 
 Transactions
 ------------
@@ -24,6 +25,7 @@ request session — still owns the commit.
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID, uuid5
 
 import structlog
@@ -34,6 +36,10 @@ from ai_greenhouse.control.actuator import ActuationRequest, Actuator, LoopbackA
 from ai_greenhouse.control.models import Command, CommandState, ControlLoop
 from ai_greenhouse.control.policy import FanAction, evaluate_hysteresis
 from ai_greenhouse.control.repository import CommandRepository, ControlLoopRepository
+from ai_greenhouse.control.targets import (
+    EffectiveTemperatureBounds,
+    EffectiveTemperatureBoundsResolver,
+)
 from ai_greenhouse.gateways.models import Gateway
 from ai_greenhouse.gateways.repository import GatewayRepository
 from ai_greenhouse.infrastructure.database.base import utc_now
@@ -146,6 +152,9 @@ class AutomationService:
         """
         self._loops: ControlLoopRepository = ControlLoopRepository(session)
         self._commands: CommandRepository = CommandRepository(session)
+        self._bounds: EffectiveTemperatureBoundsResolver = EffectiveTemperatureBoundsResolver(
+            session
+        )
         self._states: PointCurrentStateRepository = PointCurrentStateRepository(session)
         self._gateways: GatewayRepository = GatewayRepository(session)
         self._clock: Clock = clock
@@ -176,10 +185,11 @@ class AutomationService:
         if loop is None:
             return None
 
+        bounds: EffectiveTemperatureBounds = await self._bounds.resolve(loop)
         action: FanAction | None = evaluate_hysteresis(
-            temperature=float(record.value),
-            lower_threshold=float(loop.lower_threshold),
-            upper_threshold=float(loop.upper_threshold),
+            temperature=Decimal(str(record.value)),
+            lower_threshold=bounds.lower,
+            upper_threshold=bounds.upper,
             fan_is_on=await self._fan_is_on(loop.control_point_id),
         )
         if action is None:
@@ -221,6 +231,7 @@ class AutomationService:
             id=command_id,
             idempotency_key=key,
             control_loop_id=loop.id,
+            runtime_target_id=bounds.runtime_target_id,
             trigger_sample_id=record.id,
             target_point_id=loop.control_point_id,
             reported_point_id=loop.status_point_id,

@@ -24,8 +24,8 @@ and neither is a Python lock:
 
 What activation does *not* do is as fixed as what it does. It reads no
 telemetry, evaluates no current state and creates no ``Command``. The runtime
-target it writes is persisted and readable and nothing consumes it: the control
-loop still decides on its own thresholds.
+target it writes is persisted and readable; the control module may consume it
+only when a later accepted current temperature reaches automation.
 """
 
 from datetime import datetime

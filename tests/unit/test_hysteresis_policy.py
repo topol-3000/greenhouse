@@ -5,15 +5,17 @@ and asserted through the database exactly once — in the end-to-end scenario
 that has to be true anyway.
 """
 
+from decimal import Decimal
+
 import pytest
 
 from ai_greenhouse.control.policy import FanAction, evaluate_hysteresis
 
-LOWER: float = 24.0
-UPPER: float = 26.0
+LOWER: Decimal = Decimal("24")
+UPPER: Decimal = Decimal("26")
 
 
-def decide(temperature: float, *, fan_is_on: bool) -> FanAction | None:
+def decide(temperature: Decimal, *, fan_is_on: bool) -> FanAction | None:
     """Evaluate one temperature against the documented demo band.
 
     Args:
@@ -34,16 +36,16 @@ def decide(temperature: float, *, fan_is_on: bool) -> FanAction | None:
 @pytest.mark.parametrize(
     ("temperature", "fan_is_on", "expected"),
     [
-        pytest.param(27.0, False, FanAction.TURN_ON, id="above the band with the fan off"),
-        pytest.param(27.0, True, None, id="above the band with the fan already on"),
-        pytest.param(23.0, True, FanAction.TURN_OFF, id="below the band with the fan on"),
-        pytest.param(23.0, False, None, id="below the band with the fan already off"),
-        pytest.param(25.0, True, None, id="inside the band keeps the fan on"),
-        pytest.param(25.0, False, None, id="inside the band keeps the fan off"),
+        pytest.param(Decimal("27"), False, FanAction.TURN_ON, id="above with fan off"),
+        pytest.param(Decimal("27"), True, None, id="above with fan already on"),
+        pytest.param(Decimal("23"), True, FanAction.TURN_OFF, id="below with fan on"),
+        pytest.param(Decimal("23"), False, None, id="below with fan already off"),
+        pytest.param(Decimal("25"), True, None, id="inside keeps fan on"),
+        pytest.param(Decimal("25"), False, None, id="inside keeps fan off"),
     ],
 )
 def test_only_leaving_the_band_changes_the_fan(
-    temperature: float,
+    temperature: Decimal,
     fan_is_on: bool,
     expected: FanAction | None,
 ) -> None:
@@ -68,4 +70,19 @@ def test_a_temperature_resting_on_a_threshold_changes_nothing(
 
 def test_a_fan_that_was_never_written_is_treated_as_off() -> None:
     """A first hot measurement has to switch a fan that has no recorded state."""
-    assert decide(27.0, fan_is_on=False) is FanAction.TURN_ON
+    assert decide(Decimal("27"), fan_is_on=False) is FanAction.TURN_ON
+
+
+def test_decimal_boundaries_are_compared_without_float_rounding() -> None:
+    """A value exactly equal to a precise decimal boundary remains a no-op."""
+    boundary = Decimal("22.0000000000000000000000000001")
+
+    assert (
+        evaluate_hysteresis(
+            temperature=boundary,
+            lower_threshold=Decimal("20"),
+            upper_threshold=boundary,
+            fan_is_on=False,
+        )
+        is None
+    )

@@ -571,6 +571,8 @@ async def create_cycle_environment(
     site_code: str = "home",
     crop_code: str = "basil",
     recipe_code: str = "basil-default",
+    lower_threshold: float = LOWER_THRESHOLD,
+    upper_threshold: float = UPPER_THRESHOLD,
 ) -> CycleEnvironment:
     """Provision the topology, the automation and the catalog a cycle joins.
 
@@ -583,12 +585,19 @@ async def create_cycle_environment(
         site_code: Code of the site to create, and of its point namespace.
         crop_code: Code of the crop the recipe grows.
         recipe_code: Code of the recipe identity.
+        lower_threshold: Legacy lower threshold configured on the control loop.
+        upper_threshold: Legacy upper threshold configured on the control loop.
 
     Returns:
         The wired growbox, its control loop, the crop and the published recipe.
     """
     growbox = await create_automation_growbox(http_client, code=site_code, name=site_code.title())
-    control_loop = await create_control_loop(http_client, growbox)
+    control_loop = await create_control_loop(
+        http_client,
+        growbox,
+        lower_threshold=lower_threshold,
+        upper_threshold=upper_threshold,
+    )
     crop = await create_crop(http_client, code=crop_code)
     recipe = await create_recipe(http_client, crop["id"], code=recipe_code)
     return CycleEnvironment(growbox, control_loop, crop, recipe)
