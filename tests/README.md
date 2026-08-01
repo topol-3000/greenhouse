@@ -25,7 +25,8 @@ tests/
     ├── points/                 points and their state projection
     ├── telemetry/              the write boundary that fills that projection
     ├── control/                control loops and the automation they drive
-    └── agronomy/               crops and immutable published recipe versions
+    ├── agronomy/               crops and immutable published recipe versions
+    └── cultivation/            grow cycles, their lifecycle and runtime targets
 ```
 
 Integration tests run against a real PostgreSQL instance and skip when
@@ -43,6 +44,8 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
 | `integration/<module>/` | Domain invariants through the real endpoints, each by its **refusal**; endpoint-specific filters; what PostgreSQL enforces and the service cannot. | Field validation, the pagination envelope or the archive lifecycle a second time. |
 | `integration/telemetry/` | The one module with no endpoint of its own: its tests call the service on the `session` fixture, commit or roll back as `get_session` would, and assert what reached the database. | The state response shape or the point rules a second time. |
 | `integration/agronomy/` | What a recipe graph must be, each rule by its refusal, and the row counts a refusal leaves behind; what PostgreSQL enforces on the catalog on its own. | The field bounds, the decimal serialisation or the pagination envelope a second time. |
+| `integration/cultivation/` | What planning and running a cycle enforce, each rule by its refusal, and what the cycle, its stage instance and its runtime target look like *in the database* after every transition. | The lifecycle table, the loop resolution or the schema bounds a second time — those are pure and live in `unit/`. |
+| `integration/cultivation/test_grow_cycle_concurrency.py` | The only tests that leave the shared rolled-back transaction: two real connections, a row lock and a partial unique index. It builds its own engine, commits, and truncates what it committed however it ends. | Anything a single transaction can already show. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, and a `downgrade base` that really empties it. | Table shapes that a domain test already asserts. |
 | `integration/test_topology_demo.py`, `test_dashboard_read_model.py` | Each documented walkthrough works end to end in the documented order, and the endpoints one dashboard frame reads answer for an empty cloud, a configured facility and a measured one. | Any rule not visible from the scenario. |
 | `integration/test_clean_startup.py`, `unit/test_clean_bootstrap.py` | That the cloud creates no data: the lifespan leaves every domain table empty, the public reads answer anyway, and no package, entry point, entrypoint or Compose service runs a seed. | What the provisioning endpoints themselves enforce. |

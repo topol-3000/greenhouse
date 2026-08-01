@@ -25,6 +25,8 @@ COMMANDS_URL: str = "/api/v1/commands"
 CROPS_URL: str = "/api/v1/crops"
 GROWING_RECIPES_URL: str = "/api/v1/growing-recipes"
 RECIPE_VERSIONS_URL: str = "/api/v1/recipe-versions"
+GROW_CYCLES_URL: str = "/api/v1/grow-cycles"
+RUNTIME_TARGETS_URL: str = "/api/v1/runtime-targets"
 
 DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     SITES_URL,
@@ -34,6 +36,8 @@ DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     CONTROL_LOOPS_URL,
     CROPS_URL,
     GROWING_RECIPES_URL,
+    GROW_CYCLES_URL,
+    RUNTIME_TARGETS_URL,
 )
 """Every collection a client can reach. None of them accepts ``DELETE``."""
 
@@ -523,6 +527,131 @@ async def create_recipe(
     """
     response = await http_client.post(GROWING_RECIPES_URL, json=recipe_body(crop_id, **overrides))
     assert response.status_code == 201, response.text
+    return response.json()
+
+
+class CycleEnvironment(NamedTuple):
+    """Everything a grow cycle needs before it can be planned or activated.
+
+    A wired climate zone with its hysteresis loop on one side, and a published
+    recipe version on the other. The cycle is what joins them, and it is the
+    only thing in this project that names both.
+    """
+
+    growbox: AutomationGrowbox
+    control_loop: dict[str, Any]
+    crop: dict[str, Any]
+    recipe: dict[str, Any]
+
+    @property
+    def facility_id(self) -> str:
+        """Return the facility the cycle runs in."""
+        return str(self.growbox.facility["id"])
+
+    @property
+    def climate_zone_id(self) -> str:
+        """Return the climate zone the cycle is assigned to."""
+        return str(self.growbox.control_zone["id"])
+
+    @property
+    def recipe_version_id(self) -> str:
+        """Return the published version the cycle is grown against."""
+        return str(self.recipe["version"]["id"])
+
+    @property
+    def temperature_requirement(self) -> dict[str, Any]:
+        """Return the requirement a runtime target is snapshotted from."""
+        requirements = self.recipe["version"]["stage"]["requirements"]
+        return next(item for item in requirements if item["metric_type"] == "air_temperature")
+
+
+async def create_cycle_environment(
+    http_client: httpx.AsyncClient,
+    *,
+    site_code: str = "home",
+    crop_code: str = "basil",
+    recipe_code: str = "basil-default",
+) -> CycleEnvironment:
+    """Provision the topology, the automation and the catalog a cycle joins.
+
+    Every code is a parameter so a test can build a second, independent
+    environment beside the first — which is what the concurrency and the
+    cross-facility refusals need.
+
+    Args:
+        http_client: The client under test.
+        site_code: Code of the site to create, and of its point namespace.
+        crop_code: Code of the crop the recipe grows.
+        recipe_code: Code of the recipe identity.
+
+    Returns:
+        The wired growbox, its control loop, the crop and the published recipe.
+    """
+    growbox = await create_automation_growbox(http_client, code=site_code, name=site_code.title())
+    control_loop = await create_control_loop(http_client, growbox)
+    crop = await create_crop(http_client, code=crop_code)
+    recipe = await create_recipe(http_client, crop["id"], code=recipe_code)
+    return CycleEnvironment(growbox, control_loop, crop, recipe)
+
+
+def grow_cycle_body(environment: CycleEnvironment, **overrides: Any) -> dict[str, Any]:
+    """Build the representative grow cycle creation body.
+
+    Args:
+        environment: The facility, zone and version the cycle joins.
+        **overrides: Fields replacing the defaults.
+
+    Returns:
+        The request body, ready to be posted.
+    """
+    return {
+        "code": "basil-demo-cycle",
+        "name": "Basil Grow Cycle",
+        "facility_id": environment.facility_id,
+        "climate_zone_id": environment.climate_zone_id,
+        "recipe_version_id": environment.recipe_version_id,
+        "planned_start_at": None,
+    } | overrides
+
+
+async def create_grow_cycle(
+    http_client: httpx.AsyncClient,
+    environment: CycleEnvironment,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Plan a grow cycle and return its representation.
+
+    Args:
+        http_client: The client under test.
+        environment: The facility, zone and version the cycle joins.
+        **overrides: Fields replacing the defaults of the request body.
+
+    Returns:
+        The decoded response body of the created cycle.
+    """
+    response = await http_client.post(
+        GROW_CYCLES_URL,
+        json=grow_cycle_body(environment, **overrides),
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def activate_grow_cycle(
+    http_client: httpx.AsyncClient,
+    grow_cycle_id: str,
+) -> dict[str, Any]:
+    """Activate a planned cycle, requiring the activation to be accepted.
+
+    Args:
+        http_client: The client under test.
+        grow_cycle_id: The cycle to activate.
+
+    Returns:
+        The decoded response body of the now-active cycle.
+    """
+    response = await http_client.post(f"{GROW_CYCLES_URL}/{grow_cycle_id}/activate")
+    assert response.status_code == 200, response.text
     return response.json()
 
 
