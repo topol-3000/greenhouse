@@ -109,3 +109,80 @@ async def test_the_script_only_reads_and_never_addresses_a_simulation_run(
     # page that dated activity by that field alone would show the epoch for
     # every command a real producer applied.
     assert "acknowledged_at" in script
+
+
+async def test_the_page_carries_the_agronomic_section_and_no_control_for_it(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """The delivered markup declares every field the section writes, and no action.
+
+    The values are absent from the markup by design: they arrive from the public
+    API. What has to be here is the section that receives them — a field the
+    script writes to but the browser never receives is a value nobody sees.
+    """
+    page = (await http_client.get("/")).text
+
+    for name in (
+        "cycle-name",
+        "cycle-status",
+        "cycle-message",
+        "cycle-recipe",
+        "cycle-stage",
+        "cycle-temperature",
+        "cycle-temperature-source",
+        "cycle-humidity",
+        "cycle-photoperiod",
+    ):
+        assert f'data-field="{name}"' in page
+    # The one action the page has is still the one it had: reading again.
+    assert set(re.findall(r'data-action="(\w+)"', page)) == {"retry"}
+    assert page.count("<button") == 1
+    # No crop, recipe, stage or cycle of any particular installation is written
+    # into the page a browser receives.
+    for compiled_in in ("basil", "vegetative", "22–26", "55–70", "16 h/day"):
+        assert compiled_in not in page.lower()
+
+
+async def test_the_script_reads_agronomy_and_mutates_none_of_it(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """The client reads the accepted cycle and recipe APIs and calls no action.
+
+    Provisioning a crop, publishing a recipe and running a cycle's lifecycle
+    belong to whichever client owns the installation. This page is not one: it
+    reports what those clients did and offers no way to do any of it.
+    """
+    script = (await http_client.get(SCRIPT_PATH)).text
+
+    assert "/grow-cycles?facility_id=" in script
+    assert "/recipe-versions/" in script
+    assert "/growing-recipes/" in script
+    # Only running cycles are asked for. The exact URL the page composes is
+    # asserted where the script is executed, in ``tests/javascript``.
+    assert "status=" in script
+    for mutation in ("/activate", "/complete", "/abort", "/crops"):
+        assert mutation not in script
+    # No endpoint was invented for the page either: everything it reads is a
+    # collection or a resource another client already reads.
+    for invented in ("/dashboard", "/summary", "/overview", "/internal"):
+        assert invented not in script
+
+
+async def test_the_page_adds_no_frontend_dependency(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """Three files from this origin, and nothing loaded from anywhere else.
+
+    A CDN tag, an import map or a bundle entry point would each be the start of
+    the build pipeline this product does not have.
+    """
+    page = (await http_client.get("/")).text
+    script = (await http_client.get(SCRIPT_PATH)).text
+
+    assert set(re.findall(r'(?:src|href)="([^"]+)"', page)) == {
+        STYLESHEET_PATH,
+        SCRIPT_PATH,
+    }
+    assert "//" not in "".join(re.findall(r'(?:src|href)="([^"]+)"', page))
+    assert "import " not in script
+    assert "require(" not in script

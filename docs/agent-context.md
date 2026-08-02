@@ -64,9 +64,10 @@ temperature into a fan command, one same-origin dashboard page that reads what
 producers wrote, administrative HTTP provisioning of stable Edge gateways and
 their authorized logical points, the Cloud ↔ Edge v1 telemetry and
 command-delivery API, the agronomy catalog of crops and immutable published
-recipe versions, and the grow cycle lifecycle that applies one such version to
+recipe versions, the grow cycle lifecycle that applies one such version to
 one climate zone, materializes its temperature `RuntimeTarget`, and lets the
-existing automation path consume that snapshot while it is active.
+existing automation path consume that snapshot while it is active, and the
+read-only agronomic section of that dashboard page.
 
 Out of scope: executable environment simulation, cloud-owned demo or seed data,
 devices, MQTT, production authentication, users/RBAC/multi-tenancy, a frontend
@@ -77,7 +78,8 @@ temperature RuntimeTarget and existing `hysteresis-v1` path. There is no cycle
 pause/resume/reactivation, no stage advancement or second stage, no
 humidity/lighting/irrigation/photoperiod automation, no shared-zone target
 merging, no recipe draft/edit workflow, no version 2, and no cultivar or
-inventory.
+inventory. The dashboard's agronomic section adds no cycle lifecycle control,
+no recipe authoring form and no stage advancement.
 
 Executable environment simulation belongs to the independent
 `greenhouse-simulation-lab` repository: environment models, simulated time and
@@ -110,6 +112,16 @@ creates no Basil Growbox of its own.
 - The dashboard is a client of the public API. It adds no endpoint, takes the
   facility that is configured, renders only persisted state, and offers no
   lifecycle action: it is producer-independent and refreshes on a bounded poll.
+- Its agronomic section is a read model over the same public reads. It selects
+  the active `GrowCycle` whose `climate_zone_id` is the zone on screen — never
+  by list position, code or creation order — and renders the cycle, the recipe
+  name and version, the current stage, the humidity and photoperiod
+  requirements, and the band of the cycle's active `RuntimeTarget` labelled
+  `Source: Grow Cycle`. It reads the immutable snapshot and never a closed
+  target, never the loop's legacy thresholds and never a `TargetRequirement` as
+  though it were executable; a cycle it cannot resolve consistently is reported
+  as a failure of that section alone, and a zone running nothing is
+  `No active grow cycle`. Humidity and photoperiod are display-only.
 - Reuse constraints from `core/types.py`. An entity whose code or label is
   bounded differently builds its own annotation with `slug_type` or `name_type`
   rather than redeclaring the pattern. Enum columns use `VARCHAR` plus a `CHECK`

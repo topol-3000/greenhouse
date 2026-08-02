@@ -222,6 +222,7 @@ The page shows, for the configured facility:
 - the recent temperature history, as one inline chart;
 - recent activity: the commands the control loop applied and the newest
   temperature samples, newest first;
+- the grow cycle running in the displayed climate zone, when one is;
 - an error banner with a **Retry** button when a read fails, which keeps the
   last values that were valid on screen.
 
@@ -229,6 +230,51 @@ It refreshes every five seconds by a plain poll of those read endpoints. There
 is no WebSocket, no SSE and no producer lifecycle signal, so the refresh is
 independent of who is writing the telemetry and of whether anything is writing
 at all.
+
+### The grow cycle section
+
+When the displayed climate zone is running a grow cycle, the page shows what it
+is being grown against:
+
+```text
+Basil Grow Cycle                 Active
+Recipe: Default basil recipe v1
+Stage: Vegetative
+Temperature target: 22–26 °C     Source: Grow Cycle
+Humidity target: 55–70 %
+Photoperiod: 16 h/day
+```
+
+Every name and number there is read from the public API — from
+`GET /api/v1/grow-cycles?facility_id=…&status=active`, the cycle's
+`GET /api/v1/recipe-versions/{id}` and that version's
+`GET /api/v1/growing-recipes/{id}`. No crop, recipe, stage or value is compiled
+into the page, and the cycle is selected by matching `climate_zone_id` against
+the zone on screen: an active cycle running in another zone of the same facility
+is not this zone's cycle and is not shown.
+
+**`Source: Grow Cycle`** is provenance. The temperature band comes from the
+cycle's active `RuntimeTarget` — the immutable snapshot the control loop is
+actually deciding on — and not from the loop's own legacy thresholds and not
+from the recipe requirement the snapshot was copied from. A facility with no
+active cycle keeps running on those thresholds, and the section says
+`No active grow cycle` instead.
+
+Humidity and photoperiod are shown as read-only recipe context. Nothing in this
+product automates either one: only the temperature target is executed.
+
+The section is read-only in every other sense too. There is no button to plan,
+activate, complete or abort a cycle, none to publish or edit a recipe, and no
+stage advancement — provisioning and lifecycle belong to whichever client owns
+the installation. When a cycle is completed or aborted elsewhere, the next
+refresh finds it gone from the active list and returns to `No active grow
+cycle`; the closed target stays readable as history under
+`GET /api/v1/runtime-targets` and is never shown as current.
+
+If a grow cycle read fails, or the cycle and its recipe version do not describe
+one consistent graph, the section alone reports that it could not be read and
+clears itself. The readings, chart and activity beside it keep working, and
+**Retry** reloads everything.
 
 ### What it shows before anything exists
 
@@ -1466,6 +1512,9 @@ not part of the system:
   SSE: the page polls the existing read resources on a fixed interval;
 - no dashboard action that starts, stops or configures a producer: the page
   reads, and its only button re-reads;
+- no dashboard cycle lifecycle control, recipe authoring form or stage
+  advancement: the grow cycle section reports what another client provisioned
+  and mutates nothing;
 - no endpoint that creates a command: a command is a consequence of accepted
   telemetry, never something a client asks for;
 - no manual fan control, no delivery attempts, retries or expiry, and no
