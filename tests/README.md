@@ -17,6 +17,7 @@ The rule these guidelines exist to enforce is short:
 tests/
 ├── conftest.py                 settings and logging fixtures
 ├── unit/                       no database, no HTTP
+├── javascript/                 the dashboard page, executed — see its README
 └── integration/
     ├── conftest.py             migrated database, rolled-back transaction, ASGI client
     ├── factories.py            shared request builders — the setup of every test
@@ -33,6 +34,12 @@ Integration tests run against a real PostgreSQL instance and skip when
 `DATABASE_URL` is unset. SQLite is not a substitute: the schema comes from the
 migrations, and several tests exist precisely to check what PostgreSQL enforces.
 
+`javascript/` is the same idea for the other language in this repository: it
+executes the delivered `dashboard.js` on Node and skips when Node is unset the
+way an integration test skips without a database. Run it with
+`node --test tests/javascript/*.test.mjs`, and read
+[`javascript/README.md`](javascript/README.md) before adding to it.
+
 ## Which layer asserts what
 
 | Layer | Asserts | Does **not** assert |
@@ -47,7 +54,8 @@ migrations, and several tests exist precisely to check what PostgreSQL enforces.
 | `integration/cultivation/` | What planning and running a cycle enforce, each rule by its refusal, and what the cycle, its stage instance and its runtime target look like *in the database* after every transition. | The lifecycle table, the loop resolution or the schema bounds a second time — those are pure and live in `unit/`. |
 | `integration/cultivation/test_grow_cycle_concurrency.py` | The only tests that leave the shared rolled-back transaction: two real connections, a row lock and a partial unique index. It builds its own engine, commits, and truncates what it committed however it ends. | Anything a single transaction can already show. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, and a `downgrade base` that really empties it. | Table shapes that a domain test already asserts. |
-| `integration/test_topology_demo.py`, `test_dashboard_read_model.py` | Each documented walkthrough works end to end in the documented order, and the endpoints one dashboard frame reads answer for an empty cloud, a configured facility and a measured one. | Any rule not visible from the scenario. |
+| `integration/test_topology_demo.py`, `test_dashboard_read_model.py` | Each documented walkthrough works end to end in the documented order, and the endpoints one dashboard frame reads answer for an empty cloud, a configured facility, a measured one, a facility running a cycle and one whose cycle has ended. | Any rule not visible from the scenario, and anything the page decides rather than the API. |
+| `javascript/` | What the page *does* with those answers: which cycle it selects for the zone on screen, what it writes into which field, and how it behaves while loading, when a read fails and when the responses disagree. | The endpoints themselves, the response shapes or the assets' delivery. |
 | `integration/test_clean_startup.py`, `unit/test_clean_bootstrap.py` | That the cloud creates no data: the lifespan leaves every domain table empty, the public reads answer anyway, and no package, entry point, entrypoint or Compose service runs a seed. | What the provisioning endpoints themselves enforce. |
 | `integration/test_external_control_cycle.py` | One growbox provisioned through the public APIs and driven through the public Cloud ↔ Edge endpoints closes `OFF → ON → OFF`. | Anything a focused test already owns — page delivery, the Edge error contract, acknowledgement conflicts. |
 
