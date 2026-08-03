@@ -1,8 +1,10 @@
 """Top-level routers mounted by ``create_app()``.
 
-``root_router`` carries unversioned endpoints: ``GET /health``, and the
-dashboard page and its assets. ``api_v1_router`` is the versioned router that
-domain-entity stories mount their endpoints on.
+This is an API-only backend. ``root_router`` carries the one unversioned
+endpoint, ``GET /health``; there is no owner-facing page, no static mount and no
+asset route, because the owner interface is the separate `greenhouse-dashboard`
+application and reaches this one over the public HTTP API. ``api_v1_router`` is
+the versioned router that domain-entity stories mount their endpoints on.
 """
 
 from fastapi import APIRouter
@@ -10,7 +12,6 @@ from fastapi import APIRouter
 from ai_greenhouse.api.routes.commands import router as commands_router
 from ai_greenhouse.api.routes.control_loops import router as control_loops_router
 from ai_greenhouse.api.routes.control_zones import router as control_zones_router
-from ai_greenhouse.api.routes.dashboard import router as dashboard_router
 from ai_greenhouse.api.routes.edge import router as edge_router
 from ai_greenhouse.api.routes.facilities import router as facilities_router
 from ai_greenhouse.api.routes.gateways import router as gateways_router
@@ -23,7 +24,6 @@ API_V1_PREFIX: str = "/api/v1"
 
 root_router: APIRouter = APIRouter()
 root_router.include_router(health_router)
-root_router.include_router(dashboard_router)
 
 api_v1_router: APIRouter = APIRouter(prefix=API_V1_PREFIX)
 """Versioned router for domain endpoints.

@@ -57,6 +57,41 @@ def test_domain_routes_are_mounted_under_the_versioned_prefix(settings: Settings
     assert set(paths[f"{API_V1_PREFIX}/commands"]) == {"get"}
 
 
+def test_the_owner_dashboard_reads_stay_registered_and_unchanged(settings: Settings) -> None:
+    """The endpoints the standalone owner dashboard reads survived the frontend removal.
+
+    The dashboard moved to its own repository and talks to this one over the
+    public API, so the operations it depends on are now a cross-repository
+    contract rather than an internal detail of a page shipped alongside them.
+    Paths, methods and the response fields it reads are asserted together: the
+    frontend was removed, and none of this moved with it.
+
+    ``point_kind`` is named explicitly because it is how a client tells a
+    measurement from a control and a status point, which is the whole basis of
+    what a monitoring view may display.
+    """
+    document = create_app(settings).openapi()
+    paths = document["paths"]
+    schemas = document["components"]["schemas"]
+
+    assert set(paths[f"{API_V1_PREFIX}/facilities"]) == {"get", "post"}
+    assert set(paths[f"{API_V1_PREFIX}/facilities/{{facility_id}}"]) == {"get", "patch"}
+    assert set(paths[f"{API_V1_PREFIX}/facilities/{{facility_id}}/configuration"]) == {"get"}
+    assert set(paths[f"{API_V1_PREFIX}/points"]) == {"get", "post"}
+    assert set(paths[f"{API_V1_PREFIX}/points/{{point_id}}/state"]) == {"get"}
+    assert set(paths[f"{API_V1_PREFIX}/points/{{point_id}}/telemetry"]) == {"get"}
+
+    assert {"point_kind", "metric_type", "data_type", "unit", "code", "facility_id"} <= set(
+        schemas["PointRead"]["properties"]
+    )
+    assert {"site", "facility", "control_zones", "points"} == set(
+        schemas["FacilityConfigurationRead"]["properties"]
+    )
+    assert {"observed_at", "received_at", "value", "quality", "unit", "point_id"} <= set(
+        schemas["TelemetrySampleRead"]["properties"]
+    )
+
+
 def test_no_simulation_lifecycle_operation_is_exposed(settings: Settings) -> None:
     """Executable simulation is Simulation Lab's; the cloud publishes none of it.
 

@@ -2,9 +2,12 @@
 
 [![CI](https://github.com/topol-3000/greenhouse/actions/workflows/ci.yml/badge.svg)](https://github.com/topol-3000/greenhouse/actions/workflows/ci.yml)
 
-AI Greenhouse is a modular-monolith backend for incrementally building greenhouse
-automation scenarios. It runs on FastAPI with PostgreSQL, Alembic migrations,
-typed configuration, structured logging, and a database-aware health endpoint.
+AI Greenhouse is the **cloud API/backend** for incrementally building greenhouse
+automation scenarios. It is a modular monolith on FastAPI with PostgreSQL,
+Alembic migrations, typed configuration, structured logging, and a
+database-aware health endpoint. It serves an HTTP API and nothing else — there
+is no owner-facing dashboard in this repository and starting it does not expose
+one.
 
 The implemented domain is the complete digital growbox topology — sites,
 facilities, control zones, logical points, current-state projections,
@@ -14,10 +17,7 @@ automation loop: an accepted temperature is evaluated by a hysteresis policy and
 turns a logical fan on or off through an idempotent command. Administrative
 clients can provision stable Edge gateway identities and logical-point
 authorization through HTTP, then use the Cloud ↔ Edge v1 data plane for
-telemetry and command delivery. One same-origin dashboard page reads the
-persisted result: the current temperature, humidity and fan state of the
-configured facility, its recent temperature history, and the commands the
-control loop applied.
+telemetry and command delivery.
 
 The cloud creates no data of its own. A clean deployment starts with empty
 domain tables and stays that way until a client provisions a facility through
@@ -27,7 +27,28 @@ equipment, or the environment simulation that lives in the separate
 repository.
 
 The runtime is Python 3.14 with PostgreSQL 18. Production authentication,
-devices, and a frontend framework are not included.
+devices, and frontend code of any kind are not included.
+
+## Repositories and how they meet
+
+| Repository | Owns | Reaches this one by |
+| --- | --- | --- |
+| `greenhouse` (here) | The cloud API, the domain and the database. | — |
+| [`greenhouse-dashboard`](https://github.com/topol-3000/greenhouse-dashboard) | The **sole owner-facing UI**: everything an owner sees. | The public HTTP API |
+| [`greenhouse-simulation-lab`](https://github.com/topol-3000/greenhouse-simulation-lab) | Executable environment simulation and virtual devices. | The public Cloud ↔ Edge v1 API |
+
+The repositories communicate **only** through the public HTTP API. This backend
+holds no frontend code, asset, template or static mount; it does not embed,
+redirect to, proxy or host the dashboard, and it carries no CORS configuration
+on the dashboard's behalf. Serving the dashboard and this API from one origin —
+a development proxy, or whatever a deployment uses — is the dashboard
+repository's responsibility.
+
+Real edge producers are separate again: like Simulation Lab, they are ordinary
+clients of the Cloud ↔ Edge v1 contract and run nothing inside the cloud.
+
+The reasoning is recorded in
+[`docs/decisions/0003-api-only-backend-and-separate-owner-dashboard.md`](docs/decisions/0003-api-only-backend-and-separate-owner-dashboard.md).
 
 ## Cloud ↔ Edge contracts
 
@@ -202,43 +223,26 @@ If PostgreSQL cannot execute the health query, the endpoint returns HTTP 503 wit
 The response never includes connection strings, credentials, exception details,
 or stack traces. Technical failure context is written to secret-redacted JSON logs.
 
-## The dashboard
+Browse the API at <http://localhost:8000/docs>, or read the generated schema at
+<http://localhost:8000/openapi.json>. `GET /` is not a route: this service serves
+no page, so it answers HTTP 404 like any other unrouted path.
 
-`docker compose up --build` serves one same-origin page on
-<http://localhost:8000/>. It is an operational read view of what is persisted,
-and nothing else: it creates no resource, starts and stops no producer, and adds
-no endpoint of its own — every value on it comes from the same public API any
-other client reads.
+## The owner dashboard
 
-The page shows, for the configured facility:
+The owner-facing UI is the separate
+[`greenhouse-dashboard`](https://github.com/topol-3000/greenhouse-dashboard)
+repository. It is not served from here, and `docker compose up --build` starts an
+API and no dashboard.
 
-- the facility name;
-- the current temperature, humidity and fan state;
-- the recent temperature history, as one inline chart;
-- recent activity: the commands the control loop applied and the newest
-  temperature samples, newest first;
-- an error banner with a **Retry** button when a read fails, which keeps the
-  last values that were valid on screen.
+The dashboard is an ordinary client of the public API described below: it reads
+facilities, facility configuration, point metadata and current state, telemetry
+history and commands, and adds no endpoint of its own. Nothing in this
+repository is shaped for it — no aggregate resource, no dashboard-specific
+response and no CORS configuration — and it carries its own build, delivery and
+same-origin proxying. Run it from its own checkout, following that repository's
+README.
 
-It refreshes every five seconds by a plain poll of those read endpoints. There
-is no WebSocket, no SSE and no producer lifecycle signal, so the refresh is
-independent of who is writing the telemetry and of whether anything is writing
-at all.
-
-### What it shows before anything exists
-
-A clean cloud has no facility, and the page says so instead of failing: it
-renders `No facility configured` and keeps polling, so a facility provisioned
-afterwards appears on the next refresh without a reload. A facility that exists
-but has never been measured renders with `No data` in every reading and an empty
-chart — that is the normal state of a growbox whose gateway has not reported
-yet.
-
-The page shows the first configured facility. Which facility that is depends
-entirely on what a client provisioned; no code, name or identifier is compiled
-into the page.
-
-### Where the data comes from
+## Where the data comes from
 
 Measurements reach the cloud only over the public Cloud ↔ Edge v1 telemetry
 boundary. To watch the fan switch on and off locally without any physical
@@ -323,9 +327,9 @@ with its short state. Every one of those states is `"quality": "no_data"` with
 state projections; it does not produce values.
 
 Points, codes and roles are yours to choose — this growbox is an example, not a
-fixture the cloud knows about. The dashboard renders `air_temperature`,
-`air_humidity` and `fan_running` when a facility defines them, and shows
-`No data` for the ones it does not.
+fixture the cloud knows about. A monitoring client reads whichever points a
+facility defines, and every point it has not measured yet answers with
+`"quality": "no_data"`.
 
 Nothing about this is single-use: creating a site, a facility, a zone, a point
 or an assignment that already exists is refused with a documented HTTP 409
@@ -1087,12 +1091,14 @@ its own, at startup or anywhere else. The following are not part of the system:
 - no production authentication, users, RBAC or multi-tenancy;
 - no devices, channels, bindings, or physical addresses;
 - no device discovery, MQTT, offline queue or driver registry;
-- no frontend framework, build pipeline or design system: the dashboard is one
-  page of plain HTML, CSS and JavaScript served from this application;
+- no owner-facing frontend of any kind: no page, asset, template, static mount,
+  framework, build pipeline or design system, and no route that serves,
+  redirects to or proxies one. The owner UI is the separate
+  `greenhouse-dashboard` repository;
 - no dashboard aggregate endpoint, no persisted event log and no WebSocket or
-  SSE: the page polls the existing read resources on a fixed interval;
-- no dashboard action that starts, stops or configures a producer: the page
-  reads, and its only button re-reads;
+  SSE: a monitoring client polls the existing read resources;
+- no CORS configuration: a client that needs this API on its own origin proxies
+  it, which is that client's concern and not the backend's;
 - no endpoint that creates a command: a command is a consequence of accepted
   telemetry, never something a client asks for;
 - no manual fan control, no delivery attempts, retries or expiry, and no
@@ -1111,7 +1117,7 @@ through the one public Edge ingestion path.
 Milestone 5 delivered an agronomy catalog, a grow cycle lifecycle and a
 `RuntimeTarget` that fed the control loop. It was rolled back out of the active
 product on 2026-08-03, before it had grown anything. These no longer exist —
-not as a model, an endpoint, a table, a schema field or a section of the page:
+not as a model, an endpoint, a table or a schema field:
 
 | Removed | What it was |
 | --- | --- |
@@ -1119,7 +1125,7 @@ not as a model, an endpoint, a table, a schema field or a section of the page:
 | `GrowCycle`, `GrowCycleZoneAssignment`, `GrowStageInstance` | The cycle lifecycle and its `/api/v1/grow-cycles` endpoints, including `activate`, `complete` and `abort` |
 | `RuntimeTarget` | The immutable temperature snapshot, its `/api/v1/runtime-targets` reads, and its precedence over the control loop |
 | `commands.runtime_target_id` | The provenance column and field on the command representation |
-| The dashboard's grow cycle section | The read-only recipe, stage, target, humidity and photoperiod panel |
+| The grow cycle section of the then-embedded dashboard | The read-only recipe, stage, target, humidity and photoperiod panel |
 
 Those paths now answer HTTP 404 like any other unrouted path, and the generated
 OpenAPI document names none of them.
@@ -1241,9 +1247,8 @@ docker compose up --build
 ```
 
 After the rebuild the database holds the Alembic version row and nothing else:
-<http://localhost:8000/> serves the dashboard's `No facility configured` state,
-and `GET /api/v1/sites` answers `{"items": [], "total": 0, ...}` until something
-provisions.
+`GET /health` reports `"database": "ok"` and `GET /api/v1/sites` answers
+`{"items": [], "total": 0, ...}` until something provisions.
 
 ## Continuous integration
 
@@ -1277,8 +1282,7 @@ repository secrets.
 
 ```text
 src/ai_greenhouse/
-├── api/                 # HTTP routes, dependencies and the dashboard page
-│   └── static/          # The one HTML page and its stylesheet and script
+├── api/                 # HTTP routes, dependencies and the error envelope
 ├── core/                # Settings, logging, shared value types and exceptions
 ├── topology/            # Site, Facility, ControlZone and zone point assignments
 ├── points/              # Point and PointCurrentState: the logical values

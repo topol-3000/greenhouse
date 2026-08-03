@@ -1,10 +1,12 @@
-"""The reads the dashboard page performs, in the order it performs them.
+"""The reads the owner dashboard performs, in the order it performs them.
 
-The page is plain JavaScript and there is no browser in the test suite, so what
-is asserted here is the layer below the rendering: that the existing public
-endpoints answer everything one frame of the dashboard needs, whoever produced
-the data. That is also the milestone's claim that no aggregate dashboard
-endpoint is required — a claim this test would fail if it stopped being true.
+The dashboard is the separate `greenhouse-dashboard` application and is not run
+by this suite, so what is asserted here is the backend side of that contract:
+that the existing public endpoints answer everything one frame of the dashboard
+needs, whoever produced the data. That is also the claim that no aggregate
+dashboard endpoint is required — a claim this test would fail if it stopped
+being true, and the reason moving the frontend out of this repository changed
+none of the API it reads.
 
 Three frames are covered: an empty cloud, which is what a clean deployment
 serves until a client provisions something; a facility nothing has measured
@@ -80,7 +82,7 @@ async def test_the_dashboard_discovery_finds_nothing_in_an_empty_cloud(
     """The first read of a clean deployment succeeds and returns no facility.
 
     An empty cloud is a supported state and not an error, which is what the
-    page's explicit empty state is written from. Nothing has provisioned
+    dashboard's explicit empty state is written from. Nothing has provisioned
     anything in this test, and nothing in the application did it either.
     """
     sites = await _get(http_client, f"{API_URL}/sites")
