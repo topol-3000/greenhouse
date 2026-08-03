@@ -8,13 +8,19 @@ loop, and which point may play which role in it, belong to
 from uuid import UUID
 
 from sqlalchemy import Row, Select, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.api.pagination import PageParams, paginate
-from ai_greenhouse.control.models import Command, CommandState, ControlLoop
+from ai_greenhouse.control.models import Command, CommandSource, CommandState, ControlLoop
 from ai_greenhouse.gateways.models import GatewayPoint
 from ai_greenhouse.points.models import Point
-from ai_greenhouse.topology.models import ControlZone, ZonePointAssignment
+from ai_greenhouse.topology.models import (
+    ControlZone,
+    Facility,
+    ZonePointAssignment,
+    ZonePointRole,
+)
 
 
 class ControlLoopRepository:
@@ -190,6 +196,69 @@ class CommandRepository:
         """
         return await self._session.get(Command, command_id)
 
+    async def get_zone(self, control_zone_id: UUID) -> ControlZone | None:
+        """Load the zone a manual command is addressed to.
+
+        Args:
+            control_zone_id: The zone named by the request.
+
+        Returns:
+            The matching zone, or ``None`` when no row exists.
+        """
+        return await self._session.get(ControlZone, control_zone_id)
+
+    async def get_facility(self, facility_id: UUID) -> Facility | None:
+        """Load the facility a zone belongs to.
+
+        Read so that a manual command's target can be checked against the
+        facility context of its zone rather than against the zone alone.
+
+        Args:
+            facility_id: The facility to resolve.
+
+        Returns:
+            The matching facility, or ``None`` when no row exists.
+        """
+        return await self._session.get(Facility, facility_id)
+
+    async def get_point(self, point_id: UUID) -> Point | None:
+        """Load one point named by a manual command request.
+
+        Args:
+            point_id: The point to resolve.
+
+        Returns:
+            The matching point, or ``None`` when no row exists.
+        """
+        return await self._session.get(Point, point_id)
+
+    async def list_assignment_roles(
+        self,
+        control_zone_id: UUID,
+        point_id: UUID,
+    ) -> list[ZonePointRole]:
+        """Read the parts one point plays in one zone.
+
+        The same point can be assigned twice — a temperature that is both a
+        primary measurement and a safety interlock — so the roles are returned
+        as a set rather than as one answer.
+
+        Args:
+            control_zone_id: The zone whose composition to read.
+            point_id: The point to look for in it.
+
+        Returns:
+            Every role that point holds in that zone, possibly empty.
+        """
+        return list(
+            await self._session.scalars(
+                select(ZonePointAssignment.role).where(
+                    ZonePointAssignment.control_zone_id == control_zone_id,
+                    ZonePointAssignment.point_id == point_id,
+                )
+            )
+        )
+
     async def get_for_gateway_update(
         self,
         gateway_id: UUID,
@@ -236,35 +305,65 @@ class CommandRepository:
     async def list_history(
         self,
         *,
+        control_zone_id: UUID | None,
         control_loop_id: UUID | None,
         trigger_sample_id: UUID | None,
+        target_point_id: UUID | None,
+        source: CommandSource | None,
+        idempotency_key: str | None,
         limit: int,
     ) -> list[Command]:
-        """Read a bounded, newest-first window of applied commands.
+        """Read a bounded, newest-first window of commands.
 
         The complete order and limit are part of the statement. ``id DESC``
         breaks ties between commands written in the same instant, so repeated
         calls return the same order without Python sorting or slicing.
 
         Args:
+            control_zone_id: Restricts the result to one zone when given.
             control_loop_id: Restricts the result to one loop when given.
             trigger_sample_id: Restricts the result to the commands one
                 measurement caused when given.
+            target_point_id: Restricts the result to one commanded point when
+                given.
+            source: Restricts the result to one author when given.
+            idempotency_key: Restricts the result to the one command a key
+                identifies when given. The unique index makes the answer zero
+                or one row.
             limit: Maximum number of rows for PostgreSQL to return.
 
         Returns:
             Matching commands in ``created_at DESC, id DESC`` order.
         """
         statement: Select[tuple[Command]] = select(Command)
+        if control_zone_id is not None:
+            statement = statement.where(Command.control_zone_id == control_zone_id)
         if control_loop_id is not None:
             statement = statement.where(Command.control_loop_id == control_loop_id)
         if trigger_sample_id is not None:
             statement = statement.where(Command.trigger_sample_id == trigger_sample_id)
+        if target_point_id is not None:
+            statement = statement.where(Command.target_point_id == target_point_id)
+        if source is not None:
+            statement = statement.where(Command.source == source)
+        if idempotency_key is not None:
+            statement = statement.where(Command.idempotency_key == idempotency_key)
         statement = statement.order_by(
             Command.created_at.desc(),
             Command.id.desc(),
         ).limit(limit)
         return list(await self._session.scalars(statement))
+
+    async def get_by_key(self, key: str) -> Command | None:
+        """Load the one command an idempotency key identifies.
+
+        Args:
+            key: The idempotency key to resolve.
+
+        Returns:
+            The matching command, or ``None`` when no row carries that key.
+        """
+        return await self._session.scalar(select(Command).where(Command.idempotency_key == key))
 
     async def exists_with_key(self, key: str) -> bool:
         """Answer whether one decision has already been applied.
@@ -277,3 +376,46 @@ class CommandRepository:
         """
         statement = select(select(Command.id).where(Command.idempotency_key == key).exists())
         return bool(await self._session.scalar(statement))
+
+    async def insert_if_key_absent(self, command: Command) -> bool:
+        """Atomically claim one idempotency key for one command.
+
+        The unique index behind ``idempotency_key``, and not a check-then-insert
+        window, is what decides which of two concurrent requests writes the row.
+        The loser writes nothing at all — there is no second row to reconcile,
+        and therefore no second delivery to the Edge — and reads the winner's
+        command back through :meth:`get_by_key`.
+
+        Args:
+            command: The candidate row, fully built and validated.
+
+        Returns:
+            ``True`` when this call inserted the row, ``False`` when the key was
+            already taken.
+        """
+        statement = (
+            insert(Command)
+            .values(
+                id=command.id,
+                source=command.source,
+                idempotency_key=command.idempotency_key,
+                control_zone_id=command.control_zone_id,
+                control_loop_id=command.control_loop_id,
+                trigger_sample_id=command.trigger_sample_id,
+                target_point_id=command.target_point_id,
+                reported_point_id=command.reported_point_id,
+                gateway_id=command.gateway_id,
+                desired_value=command.desired_value,
+                state=command.state,
+                result_control_sample_id=command.result_control_sample_id,
+                result_status_sample_id=command.result_status_sample_id,
+                issued_at=command.issued_at,
+                executed_at=command.executed_at,
+                acknowledged_at=command.acknowledged_at,
+                rejection_reason=command.rejection_reason,
+                created_at=command.created_at,
+            )
+            .on_conflict_do_nothing(index_elements=[Command.idempotency_key])
+            .returning(Command.id)
+        )
+        return await self._session.scalar(statement) is not None

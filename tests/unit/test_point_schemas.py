@@ -203,3 +203,46 @@ def test_update_rejects_a_value() -> None:
 def test_update_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         PointUpdate.model_validate({"gpio": 17})
+
+
+# --- The explicit control-to-reported relationship ------------------------
+
+
+def test_create_accepts_the_reported_point_relationship() -> None:
+    """A control point can name its feedback at creation, not only afterwards."""
+    reported_point_id = uuid4()
+
+    payload = build_create(
+        point_kind=PointKind.CONTROL.value,
+        data_type=PointDataType.BOOLEAN.value,
+        unit=None,
+        reported_point_id=str(reported_point_id),
+    )
+
+    assert payload.reported_point_id == reported_point_id
+
+
+def test_create_leaves_the_relationship_unset_by_default() -> None:
+    """It is configuration, and unconfigured is a real and common state."""
+    assert build_create().reported_point_id is None
+
+
+def test_update_distinguishes_a_cleared_relationship_from_an_omitted_one() -> None:
+    """Clearing the feedback and not mentioning it are different requests.
+
+    ``null`` removes the relationship; leaving the field out keeps whatever is
+    stored. The service reads ``model_fields_set``, so the schema has to record
+    the difference rather than collapse both onto ``None``.
+    """
+    cleared = PointUpdate.model_validate({"reported_point_id": None})
+    omitted = PointUpdate.model_validate({"name": "Fan"})
+
+    assert "reported_point_id" in cleared.model_fields_set
+    assert cleared.reported_point_id is None
+    assert "reported_point_id" not in omitted.model_fields_set
+
+
+def test_update_rejects_a_relationship_that_is_not_an_identifier() -> None:
+    """A point is related by identity. A code would be a name-based guess."""
+    with pytest.raises(ValidationError):
+        PointUpdate.model_validate({"reported_point_id": "fan_running"})

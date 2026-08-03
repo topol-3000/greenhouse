@@ -21,13 +21,22 @@ the target and are opened only when the current task needs them.
   serves no page, no asset and no static mount.
 - `topology` owns `Site`, `Facility`, `ControlZone`, and zone-point
   assignments.
-- `points` owns stable logical `Point` identities and `PointCurrentState`.
+- `points` owns stable logical `Point` identities, `PointCurrentState`, and the
+  explicit `control Point -> reported_point_id` relationship naming the status
+  point that reports a control point's actual state back.
 - `telemetry` owns append-only `TelemetrySample` persistence, the idempotent
   write boundary, current-state projection updates, and read-only history.
 - `control` owns the immutable `hysteresis-v1` `ControlLoop` and its two
   thresholds, the pure policy, the idempotent `Command`, the loopback actuator
   boundary, and the source-independent ingestion path every producer offers
-  telemetry on.
+  telemetry on. A `Command` records its `source` — `control_loop` or `manual` —
+  and its own `control_zone_id`; the automatic-only `control_loop_id` and
+  `trigger_sample_id` are nullable and null on a manual command.
+- `POST /api/v1/commands` is the public boolean manual-command boundary. It is
+  on/off only, requires an `Idempotency-Key` UUID header, and accepts a target
+  only when persisted configuration says the point is an active boolean control
+  point assigned to the requested zone as `control_output` with a valid
+  `reported_point_id` and an active gateway authorized for both points.
 - `gateways` owns stable administrative gateway codes, operational gateway UUIDs,
   normalized site configuration, and additive one-owner logical-point
   authorization. Its management API is separate from the Edge data plane.
@@ -51,9 +60,15 @@ the target and are opened only when the current task needs them.
 Implemented: the growbox topology with stable logical point IDs, append-only
 telemetry, the current-state projection, telemetry history, generic hysteresis
 control-loop configuration, the automation flow that turns an accepted
-temperature into a fan command through the loop's own immutable thresholds,
-administrative HTTP provisioning of stable Edge gateways and their authorized
-logical points, and the Cloud ↔ Edge v1 telemetry and command-delivery API.
+temperature into a fan command through the loop's own immutable thresholds, the
+explicit control-to-reported point relationship, the public boolean manual
+command boundary with client-supplied idempotency, administrative HTTP
+provisioning of stable Edge gateways and their authorized logical points, and
+the Cloud ↔ Edge v1 telemetry and command-delivery API.
+
+The Customer Portal itself is not implemented here and is not delivered by this
+capability. The interface lives in `greenhouse-dashboard`; what this repository
+provides is the API it needs.
 
 Milestone 5 was rolled back on 2026-08-03. `Crop`, `GrowingRecipe`,
 `RecipeVersion`, `RecipeStage`, `TargetRequirement`, `GrowCycle`,
@@ -67,8 +82,10 @@ Out of scope: any owner-facing frontend, asset, template, static mount or build
 pipeline; executable environment simulation; cloud-owned demo or seed data;
 devices; MQTT; production authentication; users/RBAC/multi-tenancy; distributed
 workers; WebSocket/SSE; a persisted event log; a dashboard aggregate endpoint;
-manual fan control; any endpoint that creates a command; and every agronomy,
-grow cycle and RuntimeTarget concept named above.
+an Activity feed or command analytics; numeric, percentage, dimming, speed or
+free-form JSON manual control; any endpoint that creates an automatic
+control-loop command; and every agronomy, grow cycle and RuntimeTarget concept
+named above.
 
 ## Repository boundaries
 
@@ -141,6 +158,19 @@ creates no Basil Growbox of its own.
   failed application never rolls back the measurement that triggered it.
 - `fan_power` and `fan_running` are written only through the telemetry
   boundary. `fan_running` is an output and never a policy input.
+- A command's desired value is a request, never a reading. Creating or
+  acknowledging one writes no telemetry and no point state, and reported state
+  stays independent of desired value and of the command lifecycle. `pending` is
+  the only non-terminal state; `acknowledged_at` means the Edge received the
+  command and not that anything moved.
+- Which point reports a control point back is read from `reported_point_id` and
+  from nothing else — never from a code, a name, a unit, a `metric_type`, a
+  substring or a position in a zone's point list. It is not backfilled from
+  `ControlLoop`; an unconfigured relationship stays unconfigured.
+- Client-supplied idempotency is guaranteed by the unique index on
+  `commands.idempotency_key` and one `INSERT ... ON CONFLICT DO NOTHING`, not by
+  a pre-insert lookup. A supplied key is never replaced by the server, and a
+  replay writes no row and enqueues no second Edge delivery.
 - The owner dashboard is an external client of the public API. No endpoint,
   aggregate resource, response field or CORS setting is added to serve it, and
   no backend behaviour depends on it existing.

@@ -15,8 +15,11 @@ may hold it in — those stay in :mod:`ai_greenhouse.points.service` and
 :mod:`ai_greenhouse.topology.service`.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from uuid import UUID
+from datetime import datetime
+from functools import partial
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,18 +29,30 @@ from ai_greenhouse.control.exceptions import (
     CommandNotFoundError,
     ControlLoopExistsError,
     ControlLoopNotFoundError,
+    IdempotencyKeyConflictError,
     InvalidControlLoopPointError,
     InvalidControlLoopZoneError,
+    InvalidManualCommandTargetError,
 )
-from ai_greenhouse.control.models import Command, ControlLoop, ControlPolicyType
+from ai_greenhouse.control.models import (
+    Command,
+    CommandSource,
+    CommandState,
+    ControlLoop,
+    ControlPolicyType,
+)
 from ai_greenhouse.control.repository import CommandRepository, ControlLoopRepository
-from ai_greenhouse.control.schemas import ControlLoopCreate
-from ai_greenhouse.infrastructure.database.base import StatusEnum
+from ai_greenhouse.control.schemas import ControlLoopCreate, ManualCommandCreate
+from ai_greenhouse.gateways.models import Gateway
+from ai_greenhouse.gateways.repository import GatewayRepository
+from ai_greenhouse.infrastructure.database.base import StatusEnum, utc_now
 from ai_greenhouse.points.exceptions import ReferencedPointNotFoundError
 from ai_greenhouse.points.models import Point, PointDataType, PointKind
 from ai_greenhouse.points.repository import PointRepository
 from ai_greenhouse.topology.exceptions import ControlZoneNotFoundError
-from ai_greenhouse.topology.models import ZonePointRole, ZoneType
+from ai_greenhouse.topology.models import ControlZone, Facility, ZonePointRole, ZoneType
+
+Clock = Callable[[], datetime]
 
 MEASUREMENT_UNIT: str = "°C"
 """Unit the hysteresis thresholds are expressed in.
@@ -259,11 +274,14 @@ class ControlLoopService:
 
 
 class CommandService:
-    """Reads the complete command history.
+    """Reads the command history and creates the one command a client may ask for.
 
-    Read-only on purpose. Nothing creates a command through this service, and
-    there is no endpoint that would: a command is a consequence of accepted
-    telemetry, never something a client asks for.
+    A control-loop command stays a consequence of accepted telemetry and is
+    never created here: :mod:`ai_greenhouse.control.automation` owns that path
+    and nothing about it changes. What this service adds is the manual boundary —
+    a customer-facing client asking one explicitly configured actuator for one
+    boolean state — and it reaches the Edge through the same pending row, the
+    same gateway resolution and the same acknowledgement as an automatic one.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -273,6 +291,92 @@ class CommandService:
             session: The session of the request being served.
         """
         self._commands: CommandRepository = CommandRepository(session)
+        self._gateways: GatewayRepository = GatewayRepository(session)
+        self._clock: Clock = utc_now
+
+    async def create_manual_command(
+        self,
+        payload: ManualCommandCreate,
+        *,
+        idempotency_key: str,
+    ) -> tuple[Command, bool]:
+        """Create one manual command, or return the one the key already names.
+
+        Eligibility is decided entirely from persisted domain data: the zone's
+        composition, the assignment's role, the point's own columns and the
+        explicit reported-point relationship. No code, name, unit, metric,
+        substring or list position takes part in it, so a point cannot be made
+        commandable by what it is called.
+
+        Nothing is written before every rule has passed, and the write itself is
+        one statement that either claims the idempotency key or does not. A
+        replay therefore reads the stored command back without inserting a
+        second row and without offering the Edge a second delivery.
+
+        The command is created ``pending``. It is never marked applied here, and
+        no point state or telemetry is written: what the actuator actually does
+        arrives later, over the Edge acknowledgement and the telemetry boundary.
+
+        Args:
+            payload: The validated request body.
+            idempotency_key: The client's key, taken from the required
+                ``Idempotency-Key`` header.
+
+        Returns:
+            The stored command and whether this call created it.
+
+        Raises:
+            ControlZoneNotFoundError: If no zone has that identifier.
+            ReferencedPointNotFoundError: If no point has that identifier.
+            InvalidManualCommandTargetError: If the point cannot be commanded.
+            IdempotencyKeyConflictError: If the key already identifies a
+                different logical request.
+        """
+        replayed = await self._commands.get_by_key(idempotency_key)
+        if replayed is not None:
+            self._ensure_same_request(replayed, payload, idempotency_key)
+            return replayed, False
+
+        target, reported = await self._resolve_manual_target(payload)
+        gateway: Gateway | None = await self._gateways.gateway_for_command_points(
+            target.id,
+            reported.id,
+        )
+        if gateway is None:
+            raise InvalidManualCommandTargetError(
+                payload.control_zone_id,
+                payload.target_point_id,
+                "no_gateway_for_command_points",
+            )
+
+        issued_at: datetime = self._clock()
+        candidate = Command(
+            id=uuid4(),
+            source=CommandSource.MANUAL,
+            idempotency_key=idempotency_key,
+            control_zone_id=payload.control_zone_id,
+            control_loop_id=None,
+            trigger_sample_id=None,
+            target_point_id=target.id,
+            reported_point_id=reported.id,
+            gateway_id=gateway.id,
+            desired_value=payload.desired_value,
+            state=CommandState.PENDING,
+            result_control_sample_id=None,
+            result_status_sample_id=None,
+            issued_at=issued_at,
+            executed_at=None,
+            acknowledged_at=None,
+            rejection_reason=None,
+            created_at=issued_at,
+        )
+        created: bool = await self._commands.insert_if_key_absent(candidate)
+
+        stored = await self._commands.get_by_key(idempotency_key)
+        if stored is None:
+            raise RuntimeError("Idempotency key claim completed without a readable command")
+        self._ensure_same_request(stored, payload, idempotency_key)
+        return stored, created
 
     async def get_command(self, command_id: UUID) -> Command:
         """Return one command or report it missing.
@@ -294,23 +398,135 @@ class CommandService:
     async def list_commands(
         self,
         *,
+        control_zone_id: UUID | None,
         control_loop_id: UUID | None,
         trigger_sample_id: UUID | None,
+        target_point_id: UUID | None,
+        source: CommandSource | None,
+        idempotency_key: str | None,
         limit: int,
     ) -> list[Command]:
-        """Return a bounded, newest-first window of applied commands.
+        """Return a bounded, newest-first window of commands.
 
         Args:
+            control_zone_id: Restricts the result to one zone when given.
             control_loop_id: Restricts the result to one loop when given.
             trigger_sample_id: Restricts the result to the commands one
                 measurement caused when given.
+            target_point_id: Restricts the result to one commanded point when
+                given.
+            source: Restricts the result to one author when given.
+            idempotency_key: Resolves the one command a key identifies when
+                given, which is how a client that lost a creation response finds
+                out whether its request exists.
             limit: Maximum number of commands to return.
 
         Returns:
             Matching commands, newest first.
         """
         return await self._commands.list_history(
+            control_zone_id=control_zone_id,
             control_loop_id=control_loop_id,
             trigger_sample_id=trigger_sample_id,
+            target_point_id=target_point_id,
+            source=source,
+            idempotency_key=idempotency_key,
             limit=limit,
         )
+
+    async def _resolve_manual_target(
+        self,
+        payload: ManualCommandCreate,
+    ) -> tuple[Point, Point]:
+        """Apply every manual-command eligibility rule and return both points.
+
+        Args:
+            payload: The validated request body.
+
+        Returns:
+            The control point to command and the status point that reports it
+            back.
+
+        Raises:
+            ControlZoneNotFoundError: If no zone has that identifier.
+            ReferencedPointNotFoundError: If no point has that identifier.
+            InvalidManualCommandTargetError: If any rule refuses the point.
+        """
+        zone: ControlZone | None = await self._commands.get_zone(payload.control_zone_id)
+        if zone is None:
+            raise ControlZoneNotFoundError(payload.control_zone_id)
+
+        target: Point | None = await self._commands.get_point(payload.target_point_id)
+        if target is None:
+            raise ReferencedPointNotFoundError(payload.target_point_id)
+
+        refuse = partial(
+            InvalidManualCommandTargetError,
+            payload.control_zone_id,
+            payload.target_point_id,
+        )
+        if zone.status is not StatusEnum.ACTIVE:
+            raise refuse("zone_not_active")
+        facility: Facility | None = await self._commands.get_facility(zone.facility_id)
+        if facility is None or target.site_id != facility.site_id:
+            raise refuse("point_not_in_zone_facility")
+        if target.facility_id is not None and target.facility_id != zone.facility_id:
+            raise refuse("point_not_in_zone_facility")
+
+        roles = await self._commands.list_assignment_roles(
+            payload.control_zone_id,
+            payload.target_point_id,
+        )
+        if not roles:
+            raise refuse("point_not_assigned_to_zone")
+        if ZonePointRole.CONTROL_OUTPUT not in roles:
+            raise refuse("assignment_role_not_control_output")
+        if target.point_kind is not PointKind.CONTROL:
+            raise refuse("point_kind_not_control")
+        if target.status is not StatusEnum.ACTIVE:
+            raise refuse("point_not_active")
+        if target.data_type is not PointDataType.BOOLEAN:
+            raise refuse("point_data_type_not_boolean")
+        if target.reported_point_id is None:
+            raise refuse("reported_point_not_configured")
+
+        reported: Point | None = await self._commands.get_point(target.reported_point_id)
+        if reported is None:
+            raise refuse("reported_point_not_found")
+        if reported.status is not StatusEnum.ACTIVE:
+            raise refuse("reported_point_not_active")
+        if reported.point_kind is not PointKind.STATUS:
+            raise refuse("reported_point_kind_mismatch")
+        if reported.data_type is not PointDataType.BOOLEAN:
+            raise refuse("reported_point_data_type_not_boolean")
+        return target, reported
+
+    @staticmethod
+    def _ensure_same_request(
+        command: Command,
+        payload: ManualCommandCreate,
+        idempotency_key: str,
+    ) -> None:
+        """Refuse a key that already identifies a different logical request.
+
+        The identity of a request is its source, its zone, its target and the
+        value it asked for. Everything else about the stored command — its
+        state, its acknowledgement, its gateway — is what happened *to* it and
+        must not make a replay look like a conflict.
+
+        Args:
+            command: The command the key already identifies.
+            payload: The request being replayed.
+            idempotency_key: The key both claim.
+
+        Raises:
+            IdempotencyKeyConflictError: If the two are not the same request.
+        """
+        identical: bool = (
+            command.source is CommandSource.MANUAL
+            and command.control_zone_id == payload.control_zone_id
+            and command.target_point_id == payload.target_point_id
+            and command.desired_value == payload.desired_value
+        )
+        if not identical:
+            raise IdempotencyKeyConflictError(idempotency_key, command.id)

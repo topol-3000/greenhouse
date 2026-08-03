@@ -54,7 +54,7 @@ def test_domain_routes_are_mounted_under_the_versioned_prefix(settings: Settings
     assert set(paths[f"{API_V1_PREFIX}/sites"]) == {"get", "post"}
     assert set(paths[f"{API_V1_PREFIX}/sites/{{site_id}}"]) == {"get", "patch"}
     assert set(paths[f"{API_V1_PREFIX}/control-loops"]) == {"get", "post"}
-    assert set(paths[f"{API_V1_PREFIX}/commands"]) == {"get"}
+    assert set(paths[f"{API_V1_PREFIX}/commands"]) == {"get", "post"}
 
 
 def test_the_owner_dashboard_reads_stay_registered_and_unchanged(settings: Settings) -> None:

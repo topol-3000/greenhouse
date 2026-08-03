@@ -16,7 +16,7 @@ Nothing in this module writes a point's value. A new projection starts at
 """
 
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +26,14 @@ from ai_greenhouse.core.exceptions import ImmutableFieldError
 from ai_greenhouse.infrastructure.database.base import StatusEnum
 from ai_greenhouse.points.exceptions import (
     FacilityNotInSiteError,
+    InvalidReportedPointError,
     InvalidValueRangeError,
     PointCodeConflictError,
     PointFacilityArchivedError,
     PointNotFoundError,
     PointSiteArchivedError,
     PointStateNotFoundError,
+    ReferencedPointNotFoundError,
     UnitNotAllowedError,
     ValueRangeNotAllowedError,
 )
@@ -77,6 +79,14 @@ RANGE_ALLOWED_DATA_TYPES: frozenset[PointDataType] = frozenset(
     {PointDataType.FLOAT, PointDataType.INTEGER}
 )
 """Data types that can be bounded. The others have no ordering to bound."""
+
+REPORTED_POINT_KIND: PointKind = PointKind.STATUS
+"""What a point has to be to report a control point's actual state back.
+
+A status point is the domain's existing name for "what the actuator says it is
+really doing". Nothing else qualifies: a measurement is an input, a derived
+point is a computation, and a second control point is another output.
+"""
 
 
 class PointService:
@@ -124,6 +134,10 @@ class PointService:
             PointFacilityArchivedError: If that facility is archived.
             UnitNotAllowedError: If a boolean point carries a unit.
             ValueRangeNotAllowedError: If a non-numeric point is bounded.
+            ReferencedPointNotFoundError: If ``reported_point_id`` names no
+                point.
+            InvalidReportedPointError: If the named point cannot report this one
+                back.
             PointCodeConflictError: If the code is taken on that site.
         """
         site: Site | None = await self._sites.get_by_id(payload.site_id)
@@ -148,11 +162,23 @@ class PointService:
             max_value=payload.max_value,
         )
 
+        point_id: UUID = uuid4()
+        if payload.reported_point_id is not None:
+            await self._check_reported_point(
+                point_id=point_id,
+                point_kind=payload.point_kind,
+                data_type=payload.data_type,
+                site_id=payload.site_id,
+                facility_id=payload.facility_id,
+                reported_point_id=payload.reported_point_id,
+            )
+
         existing: Point | None = await self._repository.get_by_code(payload.site_id, payload.code)
         if existing is not None:
             raise PointCodeConflictError(payload.site_id, payload.code)
 
         point = Point(
+            id=point_id,
             site_id=payload.site_id,
             facility_id=payload.facility_id,
             code=payload.code,
@@ -163,6 +189,7 @@ class PointService:
             unit=payload.unit,
             min_value=payload.min_value,
             max_value=payload.max_value,
+            reported_point_id=payload.reported_point_id,
         )
         self._repository.add(point)
         try:
@@ -288,6 +315,10 @@ class PointService:
                 point.
             InvalidValueRangeError: If the resulting lower end is above the
                 resulting upper end.
+            ReferencedPointNotFoundError: If a submitted ``reported_point_id``
+                names no point.
+            InvalidReportedPointError: If the named point cannot report this one
+                back.
         """
         point: Point = await self.get_point(point_id)
 
@@ -315,6 +346,16 @@ class PointService:
         if min_value is not None and max_value is not None and min_value > max_value:
             raise InvalidValueRangeError(min_value, max_value)
 
+        if "reported_point_id" in submitted and payload.reported_point_id is not None:
+            await self._check_reported_point(
+                point_id=point.id,
+                point_kind=point.point_kind,
+                data_type=point.data_type,
+                site_id=point.site_id,
+                facility_id=point.facility_id,
+                reported_point_id=payload.reported_point_id,
+            )
+
         if payload.name is not None:
             point.name = payload.name
         if payload.status is not None:
@@ -325,9 +366,78 @@ class PointService:
             point.min_value = min_value
         if "max_value" in submitted:
             point.max_value = max_value
+        if "reported_point_id" in submitted:
+            point.reported_point_id = payload.reported_point_id
 
         await self._repository.flush()
         return point
+
+    async def _check_reported_point(
+        self,
+        *,
+        point_id: UUID,
+        point_kind: PointKind,
+        data_type: PointDataType,
+        site_id: UUID,
+        facility_id: UUID | None,
+        reported_point_id: UUID,
+    ) -> None:
+        """Check one control point against the status point it named.
+
+        Every rule is applied to persisted domain data. Nothing here reads a
+        code, a name, a unit or a metric: two points are related because a
+        client said so and both rows allow it, never because they look alike.
+
+        Args:
+            point_id: The point that would carry the relationship. Known before
+                the insert because this application generates its own keys.
+            point_kind: That point's kind. Only a control point may relate.
+            data_type: That point's data type, which the status point has to
+                match so a boolean actuator is reported back as a boolean.
+            site_id: That point's site.
+            facility_id: That point's facility, or ``None`` for a site-level
+                point.
+            reported_point_id: The status point named by the request.
+
+        Raises:
+            ReferencedPointNotFoundError: If the named point does not exist.
+            InvalidReportedPointError: If the owning point is not a control
+                point, or the named point is itself, is archived, is not a
+                status point, carries another data type, or belongs to another
+                site or facility.
+        """
+        if point_kind is not PointKind.CONTROL:
+            raise InvalidReportedPointError(point_id, reported_point_id, "point_kind_not_control")
+        if reported_point_id == point_id:
+            raise InvalidReportedPointError(point_id, reported_point_id, "reported_point_is_self")
+
+        reported: Point | None = await self._repository.get_by_id(reported_point_id)
+        if reported is None:
+            raise ReferencedPointNotFoundError(reported_point_id)
+        if reported.status is not StatusEnum.ACTIVE:
+            raise InvalidReportedPointError(
+                point_id,
+                reported_point_id,
+                "reported_point_not_active",
+            )
+        if reported.point_kind is not REPORTED_POINT_KIND:
+            raise InvalidReportedPointError(
+                point_id,
+                reported_point_id,
+                "reported_point_kind_mismatch",
+            )
+        if reported.data_type is not data_type:
+            raise InvalidReportedPointError(
+                point_id,
+                reported_point_id,
+                "reported_point_data_type_mismatch",
+            )
+        if reported.site_id != site_id or reported.facility_id != facility_id:
+            raise InvalidReportedPointError(
+                point_id,
+                reported_point_id,
+                "reported_point_not_in_facility",
+            )
 
     @staticmethod
     def _check_value_shape(

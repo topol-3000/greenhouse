@@ -4,6 +4,12 @@ Control loops are immutable configuration. Commands preserve immutable decision
 content while their delivery state may move once from ``pending`` to a terminal
 ``applied`` or ``rejected`` acknowledgement.
 
+A command has two possible authors and says which one it had. A control loop
+decides one from an accepted measurement; a customer-facing client asks for one
+directly. Both are the same fact — one boolean state change addressed to one
+logical control point — and both reach the Edge through the same pending row,
+so they are one table with a ``source`` discriminator rather than two.
+
 The policy is embedded rather than referenced. ``policy_type`` names
 ``hysteresis-v1`` and the loop's two immutable thresholds are the only source of
 the band it decides on. A separate policy table would add an entity, a version
@@ -18,7 +24,17 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Uuid, desc
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Uuid,
+    desc,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,11 +46,12 @@ from ai_greenhouse.infrastructure.database.base import (
 )
 
 MAX_IDEMPOTENCY_KEY_LENGTH: int = 200
-"""Bound on the derived key.
+"""Bound on the key.
 
-``hysteresis-v1``, two UUIDs and a decision come to 91 characters. The column
-is bounded rather than unbounded because it is unique and therefore indexed,
-and an unbounded unique text column is a size nothing controls.
+``hysteresis-v1``, two UUIDs and a decision come to 91 characters, and a
+client-supplied manual key is one UUID. The column is bounded rather than
+unbounded because it is unique and therefore indexed, and an unbounded unique
+text column is a size nothing controls.
 """
 
 COMMAND_HISTORY_INDEX_NAME: str = "ix_commands_control_loop_id_created_at_id"
@@ -46,8 +63,28 @@ instant. No standalone index on ``control_loop_id`` accompanies it: that index
 would be a prefix of this one.
 """
 
+COMMAND_ZONE_INDEX_NAME: str = "ix_commands_control_zone_id_created_at_id"
+"""The same ordered window for a customer-facing client, which reads by zone.
+
+A manual command has no control loop, so the loop index cannot serve it. This
+one covers both sources and, like it, subsumes a standalone ``control_zone_id``
+index.
+"""
+
+COMMAND_TARGET_POINT_INDEX_NAME: str = "ix_commands_target_point_id"
+"""The list filter that answers "what has been asked of this actuator"."""
+
 COMMAND_TRIGGER_INDEX_NAME: str = "ix_commands_trigger_sample_id"
 """The other query the list endpoint serves: what one measurement caused."""
+
+COMMAND_SOURCE_CONSTRAINT_NAME: str = "source_relationships"
+"""Names the rule that keeps a command's source and its references consistent.
+
+A control-loop command has both the loop that decided and the sample it decided
+on; a manual command has neither, because inventing either would report a
+customer's request as an automatic decision. Expressed in the schema because it
+is a property of the row, not of the code path that wrote it.
+"""
 
 ZONE_LOOP_CONSTRAINT_NAME: str = "uq_control_loops_control_zone_id"
 """Unique constraint naming the one rule the table enforces on its own.
@@ -71,11 +108,33 @@ class ControlPolicyType(StrEnum):
 
 
 class CommandState(StrEnum):
-    """Delivery lifecycle of a logical command."""
+    """Delivery lifecycle of a logical command.
+
+    ``PENDING`` is the only non-terminal state and the one every command is
+    written in. ``APPLIED`` is terminal success and ``REJECTED`` is terminal
+    failure; both are reached exactly once, through an Edge acknowledgement or
+    through the in-process loopback actuator, and never left again.
+
+    Acknowledgement is not a state. A pending command whose ``acknowledged_at``
+    is set has been received by the Edge and nothing more: the physical change
+    has not been reported either way, so the command is still non-terminal.
+    """
 
     PENDING = "pending"
     APPLIED = "applied"
     REJECTED = "rejected"
+
+
+class CommandSource(StrEnum):
+    """Who asked for a command.
+
+    Persisted rather than derived from ``control_loop_id IS NULL``: the source
+    is what a reader actually wants to filter and reason about, and a nullable
+    foreign key is a poor place to keep a meaning.
+    """
+
+    CONTROL_LOOP = "control_loop"
+    MANUAL = "manual"
 
 
 class ControlLoop(UUIDPrimaryKeyMixin, Base):
@@ -148,40 +207,68 @@ class ControlLoop(UUIDPrimaryKeyMixin, Base):
 
 
 class Command(Base):
-    """One logical fan state change decided by a control loop.
+    """One logical boolean state change addressed to one control point.
+
+    A control loop decides one from an accepted measurement, and a
+    customer-facing client asks for one directly. :attr:`source` says which, and
+    the automatic-only references are null on a manual command rather than
+    filled with something that would read as a decision nobody made.
 
     Gateway-owned points produce a pending command whose terminal acknowledgement
     never manufactures telemetry. Points without a gateway preserve the
     in-process loopback path, where the applied command and its two result
-    samples are atomic.
+    samples are atomic. A manual command is only accepted for a gateway-owned
+    point, so it is always the first of those two.
 
     The command names a logical point, never a device, an address or a
     protocol. That is what lets the loopback adapter of M3 be replaced by an
     Edge adapter without this table changing.
 
-    The primary key is derived rather than generated, from the same inputs as
-    :attr:`idempotency_key`. Re-processing one trigger therefore rebuilds the
-    same identifier — and, through it, the same two result-sample identifiers —
-    so a replay collides with the row it would duplicate instead of writing a
-    second set of samples beside it.
+    A control-loop command's primary key is derived rather than generated, from
+    the same inputs as its :attr:`idempotency_key`. Re-processing one trigger
+    therefore rebuilds the same identifier — and, through it, the same two
+    result-sample identifiers — so a replay collides with the row it would
+    duplicate instead of writing a second set of samples beside it. A manual
+    command's key is the client's, so its identifier is generated and the unique
+    index on the key is what a replay collides with.
 
     Attributes:
-        id: Primary key, derived from the loop, the trigger and the decision.
-        idempotency_key: The decision in one stable string. Unique, and the
-            whole of what keeps two concurrent evaluations of one sample from
-            both acting.
+        id: Primary key. Derived from the loop, the trigger and the decision for
+            a control-loop command; generated for a manual one.
+        source: Who asked for the command, from :class:`CommandSource`.
+        idempotency_key: The request in one stable string, unique across both
+            sources. Derived as ``policy:loop:sample:action`` for a control-loop
+            command, and the UUID the client supplied for a manual one. It is
+            the whole of what keeps two concurrent requests for one logical
+            action from both acting.
+        control_zone_id: The zone the commanded point is assigned to. Recorded
+            on the command itself rather than reached through the loop, because
+            a manual command has no loop and a customer-facing client reads by
+            zone.
         control_loop_id: The loop whose immutable thresholds produced the
-            decision.
+            decision. ``NULL`` on a manual command.
         trigger_sample_id: The temperature sample that caused it. ``ON DELETE
             RESTRICT``, like every other reference into the append-only stream.
-        target_point_id: The ``fan_power`` point the command was addressed to.
-        desired_value: The state asked for. ``True`` is on.
+            ``NULL`` on a manual command.
+        target_point_id: The control point the command was addressed to.
+        reported_point_id: The status point that reports the resulting state
+            back. Copied from the configuration in force when the command was
+            created, so a later reconfiguration does not reinterpret it.
+        desired_value: The state asked for. ``True`` is on. It is a request and
+            never a reading: what the point actually reports lives in the
+            telemetry stream and its current-state projection.
         result_control_sample_id: The sample recording ``desired_value`` on the
-            control point.
+            control point, written only by the in-process loopback actuator.
         result_status_sample_id: The sample recording the value the actuator
-            reported back on the status point.
-        executed_at: Instant the actuator applied the command, and the
-            ``observed_at`` of both result samples.
+            reported back on the status point, written only by the loopback.
+        issued_at: Instant the command was decided or requested.
+        executed_at: Instant the in-process actuator applied the command, and
+            the ``observed_at`` of both result samples. ``NULL`` for everything
+            an Edge gateway carries out.
+        acknowledged_at: Instant the Edge reported *receipt*. It does not mean
+            the change was physically applied, and a command carrying it is
+            still pending until it becomes ``applied`` or ``rejected``.
+        rejection_reason: Machine code and message of a terminal rejection.
         created_at: Instant the row was written.
     """
 
@@ -193,24 +280,48 @@ class Command(Base):
             desc("created_at"),
             desc("id"),
         ),
+        Index(
+            COMMAND_ZONE_INDEX_NAME,
+            "control_zone_id",
+            desc("created_at"),
+            desc("id"),
+        ),
+        Index(COMMAND_TARGET_POINT_INDEX_NAME, "target_point_id"),
         Index(COMMAND_TRIGGER_INDEX_NAME, "trigger_sample_id"),
+        CheckConstraint(
+            "(source = 'control_loop'"
+            " AND control_loop_id IS NOT NULL AND trigger_sample_id IS NOT NULL)"
+            " OR (source = 'manual'"
+            " AND control_loop_id IS NULL AND trigger_sample_id IS NULL)",
+            name=COMMAND_SOURCE_CONSTRAINT_NAME,
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True)
+    source: Mapped[CommandSource] = enum_column(
+        CommandSource,
+        constraint_name="source",
+        nullable=False,
+    )
     idempotency_key: Mapped[str] = mapped_column(
         String(MAX_IDEMPOTENCY_KEY_LENGTH),
         nullable=False,
         unique=True,
     )
-    control_loop_id: Mapped[UUID] = mapped_column(
+    control_zone_id: Mapped[UUID] = mapped_column(
         Uuid(),
-        ForeignKey("control_loops.id", ondelete="RESTRICT"),
+        ForeignKey("control_zones.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    trigger_sample_id: Mapped[UUID] = mapped_column(
+    control_loop_id: Mapped[UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey("control_loops.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    trigger_sample_id: Mapped[UUID | None] = mapped_column(
         Uuid(),
         ForeignKey("telemetry_samples.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
     target_point_id: Mapped[UUID] = mapped_column(
         Uuid(),

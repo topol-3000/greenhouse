@@ -47,6 +47,7 @@ DOCUMENTED_COLUMNS: set[str] = {
     "unit",
     "min_value",
     "max_value",
+    "reported_point_id",
     "status",
     "created_at",
     "updated_at",
@@ -56,6 +57,11 @@ DOCUMENTED_COLUMNS: set[str] = {
 Asserting the whole set, rather than the absence of a list of guessed names,
 is what makes this a contract: a ``gpio`` column added in a hurry fails here
 without anyone having had to think of the word ``gpio`` in advance.
+
+``reported_point_id`` is a reference to another *point* and not to hardware,
+which is why it is allowed here: it says which logical point reports a control
+point's state back, and still says nothing about a device, a channel or an
+address.
 """
 
 

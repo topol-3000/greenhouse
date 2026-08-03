@@ -22,6 +22,10 @@ CONTROL_ZONES_URL: str = "/api/v1/control-zones"
 POINTS_URL: str = "/api/v1/points"
 CONTROL_LOOPS_URL: str = "/api/v1/control-loops"
 COMMANDS_URL: str = "/api/v1/commands"
+GATEWAYS_URL: str = "/api/v1/gateways"
+
+IDEMPOTENCY_HEADER: str = "Idempotency-Key"
+"""Where a manual command's client-supplied key travels."""
 
 DOMAIN_COLLECTION_URLS: tuple[str, ...] = (
     SITES_URL,
@@ -403,6 +407,160 @@ async def create_control_loop(
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+async def relate_reported_point(
+    http_client: httpx.AsyncClient,
+    control_point_id: str,
+    reported_point_id: str,
+) -> httpx.Response:
+    """Configure a control point's explicit status feedback, unchecked.
+
+    The status is deliberately not asserted: most of the relationship's rules
+    are refusals, and the tests that assert them need the response itself.
+
+    Args:
+        http_client: The client under test.
+        control_point_id: The control point that gains the relationship.
+        reported_point_id: The status point that reports it back.
+
+    Returns:
+        The unchecked response.
+    """
+    return await http_client.patch(
+        f"{POINTS_URL}/{control_point_id}",
+        json={"reported_point_id": reported_point_id},
+    )
+
+
+async def provision_gateway(
+    http_client: httpx.AsyncClient,
+    site_id: str,
+    point_ids: list[str],
+    *,
+    code: str = "growbox-gateway",
+) -> dict[str, Any]:
+    """Provision a gateway and authorize it for a set of points.
+
+    Both requests go through the public management-plane API, which is the only
+    way a real deployment provisions one.
+
+    Args:
+        http_client: The client under test.
+        site_id: The site the gateway serves.
+        point_ids: The logical points it is authorized for.
+        code: The gateway's stable administrative code.
+
+    Returns:
+        The created gateway resource.
+    """
+    provisioned = await http_client.post(GATEWAYS_URL, json={"code": code, "site_id": site_id})
+    assert provisioned.status_code == 201, provisioned.text
+    gateway: dict[str, Any] = provisioned.json()["gateway"]
+
+    authorized = await http_client.post(
+        f"{GATEWAYS_URL}/{gateway['id']}/points",
+        json={"point_ids": point_ids},
+    )
+    assert authorized.status_code == 200, authorized.text
+    return gateway
+
+
+class CommandableGrowbox(NamedTuple):
+    """A climate growbox whose fan can actually be commanded.
+
+    The four-point growbox plus the two things a manual command needs and a
+    control loop does not: the explicit ``fan_power -> fan_running``
+    relationship, and a gateway authorized to carry the command out.
+    """
+
+    site: dict[str, Any]
+    facility: dict[str, Any]
+    control_zone: dict[str, Any]
+    points: dict[str, dict[str, Any]]
+    gateway: dict[str, Any]
+
+
+async def create_commandable_growbox(
+    http_client: httpx.AsyncClient,
+    **overrides: Any,
+) -> CommandableGrowbox:
+    """Build the growbox every manual-command test starts from.
+
+    Args:
+        http_client: The client under test.
+        **overrides: Fields replacing the defaults of the *site* body.
+
+    Returns:
+        The provisioned topology, its points and its gateway.
+    """
+    growbox = await create_climate_growbox(http_client, **overrides)
+    related = await relate_reported_point(
+        http_client,
+        growbox.points["fan_power"]["id"],
+        growbox.points["fan_running"]["id"],
+    )
+    assert related.status_code == 200, related.text
+    growbox.points["fan_power"] = related.json()
+
+    gateway = await provision_gateway(
+        http_client,
+        growbox.site["id"],
+        [point["id"] for point in growbox.points.values()],
+        code=f"gateway-{growbox.site['code']}",
+    )
+    return CommandableGrowbox(
+        growbox.site,
+        growbox.facility,
+        growbox.control_zone,
+        growbox.points,
+        gateway,
+    )
+
+
+def manual_command_body(growbox: CommandableGrowbox, **overrides: Any) -> dict[str, Any]:
+    """Build a valid manual command request body.
+
+    Args:
+        growbox: The growbox whose zone and fan the command addresses.
+        **overrides: Fields replacing the defaults.
+
+    Returns:
+        The request body, ready to be posted.
+    """
+    return {
+        "control_zone_id": growbox.control_zone["id"],
+        "target_point_id": growbox.points["fan_power"]["id"],
+        "desired_value": True,
+    } | overrides
+
+
+async def submit_manual_command(
+    http_client: httpx.AsyncClient,
+    growbox: CommandableGrowbox,
+    *,
+    idempotency_key: str,
+    **overrides: Any,
+) -> httpx.Response:
+    """Submit one manual command request and return the raw response.
+
+    The status is deliberately not asserted: creation, replay and every refusal
+    are all answers this boundary gives, and the tests need the response itself.
+
+    Args:
+        http_client: The client under test.
+        growbox: The growbox the command addresses.
+        idempotency_key: The client's key for this logical request.
+        **overrides: Fields replacing the defaults of the request body.
+
+    Returns:
+        The unchecked response.
+    """
+    return await http_client.post(
+        COMMANDS_URL,
+        json=manual_command_body(growbox, **overrides),
+        headers={IDEMPOTENCY_HEADER: idempotency_key},
+    )
 
 
 async def archive(http_client: httpx.AsyncClient, url: str) -> dict[str, Any]:

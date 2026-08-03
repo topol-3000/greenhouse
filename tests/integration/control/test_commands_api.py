@@ -21,15 +21,18 @@ async def test_an_unknown_command_is_reported_missing(http_client: httpx.AsyncCl
     assert response.json()["error"]["code"] == "command_not_found"
 
 
-async def test_a_command_can_neither_be_created_nor_changed(
-    http_client: httpx.AsyncClient,
-) -> None:
-    """A command is a consequence of accepted telemetry, so the resource is read-only."""
-    created = await http_client.post(COMMANDS_URL, json={})
-    patched = await http_client.patch(f"{COMMANDS_URL}/{uuid4()}", json={"desired_value": True})
+async def test_a_stored_command_cannot_be_changed(http_client: httpx.AsyncClient) -> None:
+    """A command records what was asked for, so nothing edits one afterwards.
 
-    assert created.status_code == 405, created.text
+    Only its delivery state moves, and only through an Edge acknowledgement. A
+    manual command is created through ``POST``; there is no way to re-decide one
+    that already exists.
+    """
+    patched = await http_client.patch(f"{COMMANDS_URL}/{uuid4()}", json={"desired_value": True})
+    deleted = await http_client.delete(f"{COMMANDS_URL}/{uuid4()}")
+
     assert patched.status_code == 405, patched.text
+    assert deleted.status_code == 405, deleted.text
 
 
 @pytest.mark.parametrize(

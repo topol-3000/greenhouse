@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
 from ai_greenhouse.core.types import CodeStr, NameStr, UnitStr
 from ai_greenhouse.infrastructure.database.base import StatusEnum
@@ -51,6 +51,15 @@ class PointCreate(BaseModel):
     unit: UnitStr | None = None
     min_value: RangeBound | None = None
     max_value: RangeBound | None = None
+    reported_point_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Status point reporting this control point's actual state back. Only a"
+            " control point may name one, and the named point must be an active"
+            " boolean status point of the same facility. Never inferred from a code,"
+            " a name or a metric."
+        ),
+    )
 
     @model_validator(mode="after")
     def check_range_is_ordered(self) -> Self:
@@ -74,9 +83,16 @@ class PointUpdate(BaseModel):
 
     Only the fields present in the request are applied. Unlike the topology
     schemas, an explicit ``null`` is *not* the same as omitting a field here:
-    ``unit``, ``min_value`` and ``max_value`` are nullable columns, so sending
-    ``{"min_value": null}`` clears the lower bound while leaving it out keeps
-    it. The service reads ``model_fields_set`` to tell the two apart.
+    ``unit``, ``min_value``, ``max_value`` and ``reported_point_id`` are
+    nullable columns, so sending ``{"min_value": null}`` clears the lower bound
+    while leaving it out keeps it. The service reads ``model_fields_set`` to
+    tell the two apart.
+
+    ``reported_point_id`` is mutable on purpose. It is configuration and not
+    identity: which status point reports a fan back can be corrected, and a
+    control point provisioned before the relationship existed has to be able to
+    acquire one. Nothing already recorded is reinterpreted by changing it —
+    a command carries its own copy of the relationship it was created with.
 
     Every field the point's meaning depends on is declared even though none can
     be changed, and declared with a permissive type on purpose. Accepting
@@ -92,6 +108,7 @@ class PointUpdate(BaseModel):
     unit: UnitStr | None = None
     min_value: RangeBound | None = None
     max_value: RangeBound | None = None
+    reported_point_id: UUID | None = None
     status: StatusEnum | None = None
     code: str | None = None
     site_id: UUID | None = None
@@ -107,6 +124,11 @@ class PointRead(BaseModel):
     Carries no value and no physical address. Both omissions are the point of
     the entity: the value lives in :class:`PointStateRead`, and the hardware
     behind it can arrive later without this representation changing.
+
+    ``reported_point_id`` is the one relationship it does carry, because it is
+    configuration rather than a value: a client deciding whether a control point
+    can be commanded has to be able to read the point that reports it back
+    before any command exists.
     """
 
     model_config = ConfigDict(from_attributes=True, frozen=True)
@@ -122,6 +144,7 @@ class PointRead(BaseModel):
     unit: str | None
     min_value: RangeBound | None
     max_value: RangeBound | None
+    reported_point_id: UUID | None
     status: StatusEnum
     created_at: datetime
     updated_at: datetime
