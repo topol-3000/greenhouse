@@ -19,11 +19,6 @@ persisted result: the current temperature, humidity and fan state of the
 configured facility, its recent temperature history, and the commands the
 control loop applied.
 
-Alongside the growbox, the cloud owns the first agronomy catalog: crops, and
-growing recipes whose published versions state the environment a crop asks for.
-A published version is immutable and describes requirements only — it names no
-facility, zone, loop or device, and nothing yet runs against it.
-
 The cloud creates no data of its own. A clean deployment starts with empty
 domain tables and stays that way until a client provisions a facility through
 the public APIs, and every measurement comes from an external producer — real
@@ -222,7 +217,6 @@ The page shows, for the configured facility:
 - the recent temperature history, as one inline chart;
 - recent activity: the commands the control loop applied and the newest
   temperature samples, newest first;
-- the grow cycle running in the displayed climate zone, when one is;
 - an error banner with a **Retry** button when a read fails, which keeps the
   last values that were valid on screen.
 
@@ -230,51 +224,6 @@ It refreshes every five seconds by a plain poll of those read endpoints. There
 is no WebSocket, no SSE and no producer lifecycle signal, so the refresh is
 independent of who is writing the telemetry and of whether anything is writing
 at all.
-
-### The grow cycle section
-
-When the displayed climate zone is running a grow cycle, the page shows what it
-is being grown against:
-
-```text
-Basil Grow Cycle                 Active
-Recipe: Default basil recipe v1
-Stage: Vegetative
-Temperature target: 22–26 °C     Source: Grow Cycle
-Humidity target: 55–70 %
-Photoperiod: 16 h/day
-```
-
-Every name and number there is read from the public API — from
-`GET /api/v1/grow-cycles?facility_id=…&status=active`, the cycle's
-`GET /api/v1/recipe-versions/{id}` and that version's
-`GET /api/v1/growing-recipes/{id}`. No crop, recipe, stage or value is compiled
-into the page, and the cycle is selected by matching `climate_zone_id` against
-the zone on screen: an active cycle running in another zone of the same facility
-is not this zone's cycle and is not shown.
-
-**`Source: Grow Cycle`** is provenance. The temperature band comes from the
-cycle's active `RuntimeTarget` — the immutable snapshot the control loop is
-actually deciding on — and not from the loop's own legacy thresholds and not
-from the recipe requirement the snapshot was copied from. A facility with no
-active cycle keeps running on those thresholds, and the section says
-`No active grow cycle` instead.
-
-Humidity and photoperiod are shown as read-only recipe context. Nothing in this
-product automates either one: only the temperature target is executed.
-
-The section is read-only in every other sense too. There is no button to plan,
-activate, complete or abort a cycle, none to publish or edit a recipe, and no
-stage advancement — provisioning and lifecycle belong to whichever client owns
-the installation. When a cycle is completed or aborted elsewhere, the next
-refresh finds it gone from the active list and returns to `No active grow
-cycle`; the closed target stays readable as history under
-`GET /api/v1/runtime-targets` and is never shown as current.
-
-If a grow cycle read fails, or the cycle and its recipe version do not describe
-one consistent graph, the section alone reports that it could not be read and
-clears itself. The readings, chart and activity beside it keep working, and
-**Retry** reloads everything.
 
 ### What it shows before anything exists
 
@@ -1079,7 +1028,6 @@ curl 'http://localhost:8000/api/v1/commands?control_loop_id=e03c6179-2f50-4cb4-d
       "id": "2fbf6c2f-3ed5-5207-b1e5-069f900506a0",
       "idempotency_key": "hysteresis-v1:e03c6179-2f50-4cb4-d8ea-1b46094253af:08cfcf34-39d1-5052-b4ca-964cc1d0e0ee:off",
       "control_loop_id": "e03c6179-2f50-4cb4-d8ea-1b46094253af",
-      "runtime_target_id": null,
       "trigger_sample_id": "08cfcf34-39d1-5052-b4ca-964cc1d0e0ee",
       "target_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
       "desired_value": false,
@@ -1100,9 +1048,9 @@ Rules worth knowing before calling it:
   total. `limit` defaults to `100` and must be between `1` and `1000`;
 - a command is created only when a *new* sample became the point's current
   state. A re-delivered or late measurement changes nothing and decides nothing;
-- `runtime_target_id` names the active target whose snapshot bounds produced
-  the decision. It is `null` when the loop's legacy thresholds were used and is
-  never included in the Cloud ↔ Edge v1 command envelope;
+- the band a command was decided against is the loop's, and the loop is
+  immutable, so the command names the loop and nothing else. There is one
+  source of the decision and therefore no source field;
 - `idempotency_key` is
   `hysteresis-v1:{control_loop_id}:{trigger_sample_id}:{on|off}` and is unique.
   It is what bounds two concurrent evaluations of one measurement to one action;
@@ -1117,385 +1065,18 @@ Rules worth knowing before calling it:
 | `limit` outside `1..1000` | 422 | `validation_error` |
 | Command does not exist | 404 | `command_not_found` |
 
-## Crops API
-
-A crop is what is grown, as a generic catalog entry: it belongs to no site, and
-recipes are written against it.
-
-```http
-POST /api/v1/crops
-GET  /api/v1/crops?code=&limit=&offset=
-GET  /api/v1/crops/{crop_id}
-```
-
-```bash
-curl -X POST http://localhost:8000/api/v1/crops \
-  -H 'content-type: application/json' \
-  -d '{"code": "basil", "display_name": "Basil",
-       "scientific_name": "Ocimum basilicum"}'
-```
-
-```json
-{
-  "id": "0d2f5f6b-2d0a-4a17-9d63-4b2fbbd9c2f1",
-  "code": "basil",
-  "display_name": "Basil",
-  "scientific_name": "Ocimum basilicum",
-  "status": "active",
-  "created_at": "2026-08-01T10:14:02.113204Z"
-}
-```
-
-Rules worth knowing before calling it:
-
-- `code` is a slug of 1–64 characters, unique across the whole catalog and fixed
-  once the crop exists;
-- `display_name` is stripped and must be 1–120 characters afterwards;
-  `scientific_name` is optional and at most 160;
-- `status` is not accepted on creation: a crop that has just been registered is
-  active;
-- there is **no `PATCH` and no `DELETE`**. Recipes are written against a crop,
-  so renaming or removing one would change what every recipe below it refers to.
-
-| Situation | HTTP | `error.code` |
-| --- | --- | --- |
-| Invalid request body or unknown field | 422 | `validation_error` |
-| Crop does not exist | 404 | `crop_not_found` |
-| `code` already taken | 409 | `crop_code_exists` |
-
-## Growing recipes API
-
-A growing recipe is the stable identity of one way of growing a crop. What it
-asks for lives in an immutable **published version**, which carries one stage and
-that stage's target requirements. Creating a recipe creates the whole graph in
-one transaction: identity, version 1, its stage, and its three requirements.
-
-A recipe describes an **environment only**. Nothing in it names a facility, a
-zone, a control loop, a gateway, a point or a device, which is what lets one
-recipe be applied to any growbox.
-
-```http
-POST /api/v1/growing-recipes
-GET  /api/v1/growing-recipes?code=&crop_id=&limit=&offset=
-GET  /api/v1/growing-recipes/{recipe_id}
-GET  /api/v1/recipe-versions/{recipe_version_id}
-```
-
-```bash
-curl -X POST http://localhost:8000/api/v1/growing-recipes \
-  -H 'content-type: application/json' \
-  -d '{"crop_id": "0d2f5f6b-2d0a-4a17-9d63-4b2fbbd9c2f1",
-       "code": "basil-default", "name": "Default basil recipe",
-       "version": {"version_number": 1, "stage": {
-         "code": "vegetative", "name": "Vegetative", "requirements": [
-           {"metric_type": "air_temperature", "requirement_kind": "range",
-            "min_value": 22, "max_value": 26, "unit": "°C"},
-           {"metric_type": "air_humidity", "requirement_kind": "range",
-            "min_value": 55, "max_value": 70, "unit": "%"},
-           {"metric_type": "photoperiod", "requirement_kind": "duration_per_day",
-            "target_value": 16, "unit": "h/day"}]}}}'
-```
-
-Both reads answer with the complete graph, so nothing needs a second request or
-database knowledge to display a recipe:
-
-```json
-{
-  "id": "6b0a6d29-9a5f-4d1e-9b57-6a3c58ad1f22",
-  "crop_id": "0d2f5f6b-2d0a-4a17-9d63-4b2fbbd9c2f1",
-  "code": "basil-default",
-  "name": "Default basil recipe",
-  "status": "active",
-  "created_at": "2026-08-01T10:16:40.512883Z",
-  "version": {
-    "id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
-    "recipe_id": "6b0a6d29-9a5f-4d1e-9b57-6a3c58ad1f22",
-    "version_number": 1,
-    "status": "published",
-    "published_at": "2026-08-01T10:16:40.512901Z",
-    "created_at": "2026-08-01T10:16:40.512901Z",
-    "stage": {
-      "id": "3f5c1e77-88a1-4f2b-b0c6-2e9d7a1b4c30",
-      "recipe_version_id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
-      "code": "vegetative",
-      "name": "Vegetative",
-      "sequence_number": 1,
-      "requirements": [
-        {"id": "…", "recipe_stage_id": "…", "metric_type": "air_humidity",
-         "requirement_kind": "range", "unit": "%",
-         "min_value": 55.0, "max_value": 70.0, "target_value": null},
-        {"id": "…", "recipe_stage_id": "…", "metric_type": "air_temperature",
-         "requirement_kind": "range", "unit": "°C",
-         "min_value": 22.0, "max_value": 26.0, "target_value": null},
-        {"id": "…", "recipe_stage_id": "…", "metric_type": "photoperiod",
-         "requirement_kind": "duration_per_day", "unit": "h/day",
-         "min_value": null, "max_value": null, "target_value": 16.0}
-      ]
-    }
-  }
-}
-```
-
-Rules worth knowing before calling it:
-
-- the recipe `code` is a slug of 1–80 characters, unique across the catalog and
-  fixed; the identity carries no agronomic value at all;
-- **a published version is immutable.** There is no `PATCH` and no `DELETE` for a
-  recipe, a version, a stage or a requirement, and no endpoint that adds a
-  version to an existing recipe. Drafts, version 2, cloning and deprecation are
-  not implemented;
-- `version_number` is `1`, the single stage's `code` is `vegetative` and its
-  `sequence_number` is `1`;
-- a version carries **exactly three** requirements, one per metric, in these
-  combinations and no others:
-
-| `metric_type` | `requirement_kind` | Values | `unit` |
-| --- | --- | --- | --- |
-| `air_temperature` | `range` | `min_value` < `max_value` | `°C` |
-| `air_humidity` | `range` | `min_value` < `max_value` | `%` |
-| `photoperiod` | `duration_per_day` | `0 < target_value <= 24` | `h/day` |
-
-- a `range` forbids `target_value`; a `duration_per_day` forbids `min_value` and
-  `max_value`. Values are decimals — `Infinity` and `NaN` are refused — and are
-  returned as JSON numbers;
-- requirements come back ordered by `metric_type`, and both list endpoints page
-  deterministically by `created_at ASC, id ASC`;
-- the graph is **atomic**: a rejected requirement leaves no recipe, no version
-  and no stage behind. The database enforces the same invariants independently —
-  unique codes, one requirement per `(stage, metric)`, and a check that ties each
-  requirement's values to its kind.
-
-| Situation | HTTP | `error.code` |
-| --- | --- | --- |
-| Invalid request body or unknown field | 422 | `validation_error` |
-| Wrong version number, stage, requirement set, combination or value | 422 | `invalid_recipe_version` |
-| `crop_id` references no crop | 404 | `crop_not_found` |
-| Recipe does not exist | 404 | `recipe_not_found` |
-| Version does not exist | 404 | `recipe_version_not_found` |
-| `code` already taken | 409 | `recipe_code_exists` |
-
-The reason a version was refused is named in `details.reason`, for example
-`unsupported_metric_type`, `duplicate_metric_type`, `missing_metric_type`,
-`invalid_range` or `invalid_duration`:
-
-```json
-{
-  "error": {
-    "code": "invalid_recipe_version",
-    "message": "The submitted recipe version is not valid",
-    "details": {"reason": "missing_metric_type", "metric_types": ["photoperiod"]}
-  }
-}
-```
-
-## Grow cycles API
-
-A grow cycle is one run of one published recipe version in one facility. It is
-the only resource in the system that names both a recipe and a growbox: the
-catalog stays generic, the topology stays operational, and the cycle joins them.
-
-```http
-POST /api/v1/grow-cycles
-GET  /api/v1/grow-cycles?code=&facility_id=&status=&limit=&offset=
-GET  /api/v1/grow-cycles/{grow_cycle_id}
-POST /api/v1/grow-cycles/{grow_cycle_id}/activate
-POST /api/v1/grow-cycles/{grow_cycle_id}/complete
-POST /api/v1/grow-cycles/{grow_cycle_id}/abort
-```
-
-```bash
-curl -X POST http://localhost:8000/api/v1/grow-cycles \
-  -H 'content-type: application/json' \
-  -d '{"code": "basil-demo-cycle", "name": "Basil Grow Cycle",
-       "facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
-       "climate_zone_id": "7a18d08d-e97d-4ca4-a4a3-732465c9db09",
-       "recipe_version_id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
-       "planned_start_at": null}'
-```
-
-Every read answers with enough to understand the cycle without a second request:
-its zone, the stage it is running, and the band it is being grown against.
-
-```json
-{
-  "id": "1f9c8a41-5d3e-4b62-9a0d-6c2b7e5f4a13",
-  "code": "basil-demo-cycle",
-  "name": "Basil Grow Cycle",
-  "facility_id": "9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d88",
-  "climate_zone_id": "7a18d08d-e97d-4ca4-a4a3-732465c9db09",
-  "recipe_version_id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
-  "current_stage_id": "3f5c1e77-88a1-4f2b-b0c6-2e9d7a1b4c30",
-  "status": "active",
-  "planned_start_at": null,
-  "started_at": "2026-08-01T11:02:17.441908Z",
-  "ended_at": null,
-  "created_at": "2026-08-01T10:58:03.221740Z",
-  "current_stage": {
-    "id": "3f5c1e77-88a1-4f2b-b0c6-2e9d7a1b4c30",
-    "recipe_version_id": "b7de4a90-1c3d-4f0e-9d21-0f1a2b3c4d5e",
-    "code": "vegetative",
-    "name": "Vegetative",
-    "sequence_number": 1
-  },
-  "active_runtime_target": {
-    "id": "c4b2e6a8-9f13-4d70-8e25-3a1b6c9d0e47",
-    "control_loop_id": "5e8d1c02-7b34-4a96-8f10-2d7e4b9a6c53",
-    "grow_cycle_id": "1f9c8a41-5d3e-4b62-9a0d-6c2b7e5f4a13",
-    "target_requirement_id": "8a0f3d59-2c47-4e81-b6d3-9f5a1c7e2b04",
-    "metric_type": "air_temperature",
-    "lower_value": 22.0,
-    "upper_value": 26.0,
-    "unit": "°C",
-    "effective_from": "2026-08-01T11:02:17.441908Z",
-    "effective_to": null,
-    "created_at": "2026-08-01T11:02:17.441908Z"
-  }
-}
-```
-
-### Lifecycle
-
-```text
-planned --activate--> active --complete--> completed
-                            \--abort-----> aborted
-
-planned --abort-----> aborted
-```
-
-No other transition exists. There is no pause, no resume, no reactivation, no
-stage advancement, and no way to move a cycle to another zone or recipe.
-
-- **create** always produces a `planned` cycle. `status`, `current_stage_id`,
-  `started_at` and `ended_at` are not accepted: the stage is derived from the
-  referenced version's single stage, and the instants are written by the
-  transitions. The cycle and its one climate-zone assignment are created in one
-  transaction. Nothing operational is created — no control loop is reserved, no
-  stage instance is opened and no runtime target is materialized;
-- **activate** takes no body and, in one transaction, sets the cycle `active`,
-  opens its single `GrowStageInstance` and materializes one active
-  `RuntimeTarget` from the stage's `air_temperature` requirement. All three
-  share one server-assigned instant. The control loop is resolved *then*, from
-  the topology as it stands, so a loop configured after the cycle was planned is
-  the one that gets used;
-- **complete** and **abort** close the cycle, its stage instance and its runtime
-  target together, again on one shared instant. A cycle aborted straight from
-  `planned` gets neither: it never ran.
-
-Each transition is idempotent when repeated on a cycle that already made it —
-retrying answers with the current representation and preserves the original
-timestamps. Only a transition with no meaning at all is refused.
-
-Rules worth knowing before calling it:
-
-- `code` is a slug of 1–80 characters, unique across the installation and fixed;
-  `name` is stripped and must be 1–160 characters afterwards;
-- the zone must be a **climate** zone of the supplied facility, reached through
-  the existing `control_zones.facility_id` chain;
-- activation requires exactly one compatible `hysteresis-v1` control loop for
-  that zone, whose measurement point carries `air_temperature` in `°C`. Neither
-  the loop nor its thresholds are changed by activation;
-- activation re-reads the crop, the recipe, the facility and the zone. A cycle
-  may be *planned* beside a resource that is archived afterwards; it may not
-  start growing against one;
-- **at most one active runtime target exists per control loop.** A second cycle
-  cannot take over a loop that is already driven, and the losing transaction
-  rolls back whole — its cycle stays `planned`, with no stage instance and no
-  target;
-- **activation creates no command and reads no telemetry.** The runtime target
-  is persisted and readable; only a later accepted current temperature can
-  consume it through the existing automation path;
-- there is **no `PATCH` and no `DELETE`**. Every change a cycle allows is one of
-  the three transitions above.
-
-| Situation | HTTP | `error.code` |
-| --- | --- | --- |
-| Invalid request body, unknown field or unknown `status` filter | 422 | `validation_error` |
-| Stored recipe graph cannot be grown against | 422 | `invalid_recipe_version` |
-| Cycle does not exist | 404 | `grow_cycle_not_found` |
-| `facility_id` references no facility | 404 | `facility_not_found` |
-| `climate_zone_id` references no zone | 404 | `control_zone_not_found` |
-| `recipe_version_id` references no version | 404 | `recipe_version_not_found` |
-| `code` already taken | 409 | `grow_cycle_code_exists` |
-| Zone belongs to another facility, or is not a climate zone | 409 | `invalid_grow_cycle_zone` |
-| Crop, recipe, facility or zone archived at activation | 409 | `parent_archived` |
-| No single compatible control loop for the zone | 409 | `grow_cycle_loop_unavailable` |
-| The control loop already has an active target | 409 | `grow_cycle_target_conflict` |
-| Transition the cycle's state has no meaning for | 409 | `invalid_grow_cycle_transition` |
-
-Why a loop could not be resolved is named in `details.reason` — `no_control_loop`,
-`ambiguous_control_loop`, `measurement_metric_mismatch` or
-`measurement_unit_mismatch` — and why a zone was refused is named the same way,
-as `zone_not_in_facility` or `zone_not_climate`.
-
-## Runtime targets API
-
-A runtime target is an immutable snapshot of the temperature band a running
-cycle asks for, addressed to one control loop. The values are copied from the
-recipe requirement rather than read through it, so a finished cycle still says
-what it was actually run against even if the catalog around it is archived
-later.
-
-For each accepted current temperature, automation resolves the active target by
-`control_loop_id` and `effective_to IS NULL`. Its exact Decimal snapshot bounds
-take precedence; when none exists, the loop's immutable thresholds remain the
-legacy fallback. Target-derived commands retain `runtime_target_id`. This
-boundary is recorded in
-[`docs/decisions/0001-recipe-runtime-target-control-boundary.md`](docs/decisions/0001-recipe-runtime-target-control-boundary.md).
-
-```http
-GET /api/v1/runtime-targets?control_loop_id=&active=&limit=
-GET /api/v1/runtime-targets/{runtime_target_id}
-```
-
-Like command history and unlike the paged collections, the list carries no
-total: it is a bounded newest-first window, ordered `created_at DESC, id DESC`,
-with `limit` between 1 and 1000 and defaulting to 100.
-
-```json
-{"items": [{"id": "…", "control_loop_id": "…", "grow_cycle_id": "…",
-            "target_requirement_id": "…", "metric_type": "air_temperature",
-            "lower_value": 22.0, "upper_value": 26.0, "unit": "°C",
-            "effective_from": "2026-08-01T11:02:17.441908Z",
-            "effective_to": null,
-            "created_at": "2026-08-01T11:02:17.441908Z"}]}
-```
-
-Rules worth knowing before calling it:
-
-- `active=true` returns the targets still in effect, `active=false` the closed
-  history, and omitting it returns both;
-- values are decimals returned as JSON numbers, `lower_value < upper_value`, and
-  the unit is always `°C`;
-- a target is **read-only**. There is no `POST`, `PATCH`, `PUT` or `DELETE`: a
-  target is what activating a cycle produced, never something a client asks for.
-  Its values and its source links never change, and the only mutation it ever
-  sees is `effective_to` being set once when its cycle ends;
-- a terminal cycle reports `active_runtime_target: null`; its closed target
-  remains readable here.
-
-| Situation | HTTP | `error.code` |
-| --- | --- | --- |
-| `limit` outside 1–1000, or a malformed filter | 422 | `validation_error` |
-| Target does not exist | 404 | `runtime_target_not_found` |
-
 ## Boundaries
 
 The cloud owns the domain APIs and none of the data reachable through them: it
-creates no site, facility, zone, point, gateway, telemetry sample, command, crop,
-recipe or grow cycle of its own, at startup or anywhere else. The following are
-not part of the system:
+creates no site, facility, zone, point, gateway, telemetry sample or command of
+its own, at startup or anywhere else. The following are not part of the system:
 
 - no seed, demo dataset, bootstrap command or startup fixture. There is no
-  cloud-owned Basil crop, recipe or grow cycle;
-- no recipe-driven automation beyond the one active `air_temperature`
-  RuntimeTarget consumed by the existing `hysteresis-v1` path;
-- no cycle pause, resume or reactivation, no stage advancement and no second
-  stage instance: M5 runs one stage per cycle;
-- no humidity, lighting, irrigation or photoperiod automation, and no
-  shared-zone target merging: only the `air_temperature` band is materialized,
-  and the other two requirements stay display-only properties of the recipe;
-- no recipe draft, edit, version 2, cloning, publishing transition or
-  deprecation, no stage duration or advancement, and no second stage;
+  cloud-owned Basil growbox;
+- **no agronomy of any kind**: no crop, growing recipe, recipe version, stage,
+  target requirement, grow cycle, stage instance or RuntimeTarget, and no
+  recipe-driven automation. Milestone 5 delivered all of it and it was rolled
+  back — see [Rolled back: Milestone 5](#rolled-back-milestone-5);
 - no cultivar, inventory or generic policy/rules engine;
 - no executable environment simulation, simulated time or virtual device: that
   is `greenhouse-simulation-lab`, which reaches this application only as an
@@ -1512,9 +1093,6 @@ not part of the system:
   SSE: the page polls the existing read resources on a fixed interval;
 - no dashboard action that starts, stops or configures a producer: the page
   reads, and its only button re-reads;
-- no dashboard cycle lifecycle control, recipe authoring form or stage
-  advancement: the grow cycle section reports what another client provisioned
-  and mutates nothing;
 - no endpoint that creates a command: a command is a consequence of accepted
   telemetry, never something a client asks for;
 - no manual fan control, no delivery attempts, retries or expiry, and no
@@ -1527,6 +1105,66 @@ not part of the system:
 
 Point state is filled by append-only telemetry, and every producer offers it
 through the one public Edge ingestion path.
+
+## Rolled back: Milestone 5
+
+Milestone 5 delivered an agronomy catalog, a grow cycle lifecycle and a
+`RuntimeTarget` that fed the control loop. It was rolled back out of the active
+product on 2026-08-03, before it had grown anything. These no longer exist —
+not as a model, an endpoint, a table, a schema field or a section of the page:
+
+| Removed | What it was |
+| --- | --- |
+| `Crop`, `GrowingRecipe`, `RecipeVersion`, `RecipeStage`, `TargetRequirement` | The agronomy catalog and its `/api/v1/crops`, `/growing-recipes` and `/recipe-versions` endpoints |
+| `GrowCycle`, `GrowCycleZoneAssignment`, `GrowStageInstance` | The cycle lifecycle and its `/api/v1/grow-cycles` endpoints, including `activate`, `complete` and `abort` |
+| `RuntimeTarget` | The immutable temperature snapshot, its `/api/v1/runtime-targets` reads, and its precedence over the control loop |
+| `commands.runtime_target_id` | The provenance column and field on the command representation |
+| The dashboard's grow cycle section | The read-only recipe, stage, target, humidity and photoperiod panel |
+
+Those paths now answer HTTP 404 like any other unrouted path, and the generated
+OpenAPI document names none of them.
+
+**`hysteresis-v1` is back to one source.** A control loop decides on its own
+immutable `lower_threshold` and `upper_threshold` and on nothing else. Every
+other behaviour of the flow is unchanged: the same strict boundaries, the same
+ON / no-op / OFF decisions, the same idempotency key and the same Cloud ↔ Edge
+v1 delivery. An Edge client sees no difference whatsoever — the v1 envelope
+never carried a runtime target.
+
+Nothing is rewritten to achieve this. `migrations/versions/20260801_0016`,
+`_0017` and `_0018` are published history, still present and still run;
+[`20260803_0019`](migrations/versions/20260803_0019_remove_agronomy_and_grow_cycles.py)
+is a **forward compensating migration** that drops `commands.runtime_target_id`
+before `runtime_targets`, and the grow-lifecycle tables before the catalog they
+reference. Its `downgrade` rebuilds the schema so the migration path round-trips
+and `alembic check` stays clean at the old head — **it recovers no rows**. A
+deployment that ran a grow cycle loses its crops, recipes, cycles and targets
+for good; its telemetry, current state and command history are untouched.
+Recovering the deleted rows is a restore from backup, not a downgrade.
+
+The reasoning is recorded in
+[`docs/decisions/0002-first-harvest-automation-boundary.md`](docs/decisions/0002-first-harvest-automation-boundary.md),
+which supersedes ADR 0001.
+
+## Where this is going: the first basil harvest
+
+The next product direction is a **basil growing journal plus sensor
+monitoring**. None of it is implemented yet — this section states the boundary
+so nothing above is mistaken for a step towards something else.
+
+- **Monitoring only**: temperature, air humidity, soil moisture and, optionally,
+  measured light. The cloud records them and acts on none of them.
+- **One planned automated function**: a lighting **photoperiod**.
+- **Not implemented by the rollback**: journal entities, photos, an event
+  timeline, charts of journal data, a lighting schedule and a manual override.
+- **Out of scope for the first harvest**: automatic irrigation, fan, heating,
+  humidity, nutrients, pH/EC, adaptive brightness, adaptive photoperiod and
+  agronomic recipes.
+
+The generic control loop and command infrastructure described above is kept
+because a photoperiod is the kind of thing it exists for. It is not configured
+or advertised for the first harvest: temperature and fan automation are a
+demonstration of the mechanism, not a feature of the coming milestone.
 
 ## Configuration
 
@@ -1646,8 +1284,6 @@ src/ai_greenhouse/
 ├── points/              # Point and PointCurrentState: the logical values
 ├── telemetry/           # Append-only samples and read-only history
 ├── control/             # Hysteresis loops, commands and the actuator boundary
-├── agronomy/            # Crops and immutable published growing-recipe versions
-├── cultivation/         # Grow cycles, stage instances and runtime targets
 ├── gateways/            # Stable gateway identities and point authorization
 ├── edge/                # The Cloud ↔ Edge v1 telemetry and command adapter
 └── infrastructure/

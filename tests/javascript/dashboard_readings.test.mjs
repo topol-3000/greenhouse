@@ -1,17 +1,18 @@
 /**
- * The point-state half of the page, which Unit 4 must leave alone.
+ * Everything the page renders: the readings, the chart and the activity list.
  *
- * The readings, the chart and the activity list were rendered from the same
- * three resources before the agronomic section existed. These assertions are the
- * regression the new section is measured against: they read the delivered
- * `dashboard.js` through the same stub document and touch no agronomy at all.
+ * All three come from the point states, the temperature history and the command
+ * history — the only resources the page reads. These assertions execute the
+ * delivered `dashboard.js` through the stub document, so a field the script
+ * writes to but the markup does not carry fails here.
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { API, ok, render } from "./harness.mjs";
-import { LOOP_ID, POINTS, cycle, routes } from "./fixtures.mjs";
+import { API, DASHBOARD_JS, INDEX_HTML, ok, render } from "./harness.mjs";
+import { LOOP_ID, POINTS, routes } from "./fixtures.mjs";
 
 const TEMPERATURE_POINT = POINTS.find((point) => point.code === "air_temperature");
 const FAN_POINT = POINTS.find((point) => point.code === "fan_running");
@@ -20,7 +21,7 @@ const COMMANDS_URL = `${API}/commands?control_loop_id=${LOOP_ID}&limit=20`;
 const HISTORY_URL = `${API}/points/${TEMPERATURE_POINT.id}/telemetry?limit=60`;
 
 test("the three readings are rendered with the unit their point carries", async () => {
-  const loaded = await render(routes([cycle()]));
+  const loaded = await render(routes());
 
   assert.equal(loaded.text("temperature"), "23.4 °C");
   assert.equal(loaded.text("humidity"), "61.0 %");
@@ -99,4 +100,30 @@ test("a facility nothing has done anything in says so", async () => {
 
   assert.equal(loaded.text("chart-summary"), "No temperature history yet.");
   assert.equal(loaded.text("activity"), "Nothing has happened yet.");
+});
+
+/**
+ * The rolled-back agronomic section, asserted where it would come back.
+ *
+ * Two halves, because either could return without the other: the delivered
+ * assets no longer name a grow cycle, a recipe or a runtime target, and the
+ * page reads no endpoint that served one. The second half is the stronger of
+ * the two — a section rebuilt under different words would still have to fetch
+ * something to fill itself.
+ */
+test("the page carries no grow cycle section and reads no agronomy endpoint", async () => {
+  const delivered = [readFileSync(INDEX_HTML, "utf8"), readFileSync(DASHBOARD_JS, "utf8")];
+  const removed = /grow[- _]?cycle|recipe|runtime[- _]?target|photoperiod|crop|agronom/i;
+  for (const asset of delivered) {
+    assert.equal(removed.test(asset), false);
+  }
+
+  const loaded = await render(routes());
+  const paths = loaded.requested.map((request) => request.url);
+
+  assert.deepEqual(loaded.unrouted, []);
+  assert.equal(
+    paths.some((path) => removed.test(path)),
+    false,
+  );
 });

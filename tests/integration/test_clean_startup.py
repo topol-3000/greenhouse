@@ -31,15 +31,6 @@ DOMAIN_TABLES: Final[tuple[str, ...]] = (
     "gateways",
     "gateway_points",
     "edge_telemetry_messages",
-    "crops",
-    "growing_recipes",
-    "recipe_versions",
-    "recipe_stages",
-    "target_requirements",
-    "grow_cycles",
-    "grow_cycle_zone_assignments",
-    "grow_stage_instances",
-    "runtime_targets",
 )
 """Every table a client's data lands in. A new one belongs in this list."""
 

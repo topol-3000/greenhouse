@@ -54,69 +54,6 @@
         </article>
       </section>
 
-      <!--
-        What the zone above is being grown against, when something is. Every
-        label here is static text; every value is written from a public grow
-        cycle, recipe version and runtime target read. The section reads and
-        shows: it starts no cycle, ends none, and edits no recipe.
-      -->
-      <section
-        class="agronomy"
-        aria-label="Grow cycle"
-        data-region="agronomy"
-        data-state="loading"
-      >
-        <div class="agronomy__header">
-          <h2 class="agronomy__title" data-field="cycle-name">Grow cycle</h2>
-          <span class="agronomy__status" data-field="cycle-status"></span>
-        </div>
-
-        <p class="agronomy__message" data-field="cycle-message" role="status">
-          Reading the grow cycle…
-        </p>
-
-        <dl class="agronomy__rows" data-region="cycle-detail" hidden>
-          <div class="agronomy__row">
-            <dt class="agronomy__term">Recipe</dt>
-            <dd class="agronomy__value" data-field="cycle-recipe"></dd>
-          </div>
-          <div class="agronomy__row">
-            <dt class="agronomy__term">Stage</dt>
-            <dd class="agronomy__value" data-field="cycle-stage"></dd>
-          </div>
-          <div class="agronomy__row">
-            <dt class="agronomy__term">Temperature target</dt>
-            <dd class="agronomy__value">
-              <span data-field="cycle-temperature"></span>
-              <!--
-                Provenance, not decoration: the band above is the executable
-                snapshot the control loop is running on, and this says where it
-                came from.
-              -->
-              <span class="agronomy__source"
-                >Source: <span data-field="cycle-temperature-source"></span
-              ></span>
-            </dd>
-          </div>
-          <div class="agronomy__row">
-            <dt class="agronomy__term">Humidity target</dt>
-            <dd class="agronomy__value" data-field="cycle-humidity"></dd>
-          </div>
-          <div class="agronomy__row">
-            <dt class="agronomy__term">Photoperiod</dt>
-            <dd class="agronomy__value" data-field="cycle-photoperiod"></dd>
-          </div>
-        </dl>
-        <!--
-          Humidity and photoperiod are what the recipe asks for and nothing is
-          driving them: only the temperature band above is executable today.
-        -->
-        <p class="agronomy__footnote" data-region="cycle-footnote" hidden>
-          Humidity and photoperiod are recipe requirements shown for context.
-          Only the temperature target is executed.
-        </p>
-      </section>
-
       <section class="chart" aria-label="Recent temperature">
         <h2 class="chart__label">Recent temperature</h2>
         <!--

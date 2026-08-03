@@ -225,7 +225,6 @@ export function loadDashboard(routes) {
     field: (name) => document.querySelector(`[data-field="${name}"]`),
     region: (name) => document.querySelector(`[data-region="${name}"]`),
     text: (name) => document.querySelector(`[data-field="${name}"]`).textContent,
-    state: () => document.querySelector('[data-region="agronomy"]').dataset.state,
     retry: () => document.querySelector('[data-action="retry"]').click(),
   };
 

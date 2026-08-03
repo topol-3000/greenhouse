@@ -114,7 +114,13 @@ def test_contract_schema_vocabulary_has_no_producer_specific_fields() -> None:
 
 
 def test_edge_contract_carries_no_cloud_runtime_target_provenance() -> None:
-    """The gateway receives actuator instructions, not cloud agronomy decisions."""
+    """The gateway receives actuator instructions and no cloud-side decision provenance.
+
+    ``runtime_target_id`` never reached this contract while the cloud carried it
+    and must not reach it now that the cloud does not: the v1 envelope is
+    published and its compatibility does not depend on what the cloud decides
+    with.
+    """
     schema_keys = {
         key
         for schema_path in (CONTRACT_ROOT / "schemas").glob("*.json")

@@ -75,6 +75,65 @@ def test_no_simulation_lifecycle_operation_is_exposed(settings: Settings) -> Non
     assert "simulation_run_id" not in rendered
 
 
+def test_no_agronomy_or_grow_cycle_operation_is_exposed(settings: Settings) -> None:
+    """Milestone 5's public surface is gone from the document a client reads.
+
+    The generated schema rather than the route table, for the same reason as
+    above: a router mounted again, or a response model pulled back in by a stray
+    annotation, fails here. ``runtime_target_id`` is checked over the whole
+    rendered document because it was a *field* of a surviving resource and not a
+    path of its own.
+    """
+    document = create_app(settings).openapi()
+    schemas = document.get("components", {}).get("schemas", {})
+    rendered = json.dumps(document)
+    removed_paths = (
+        "crops",
+        "growing-recipes",
+        "recipe-versions",
+        "grow-cycles",
+        "runtime-targets",
+    )
+    removed_schemas = ("Crop", "Recipe", "GrowCycle", "GrowStage", "RuntimeTarget", "Requirement")
+
+    for fragment in removed_paths:
+        assert [path for path in document["paths"] if fragment in path] == []
+    for fragment in removed_schemas:
+        assert [name for name in schemas if fragment in name] == []
+    assert "runtime_target_id" not in rendered
+    assert "active_runtime_target" not in rendered
+    # The command representation is the one that carried the provenance field.
+    command = schemas["CommandRead"]["properties"]
+    assert "runtime_target_id" not in command
+    assert {"control_loop_id", "trigger_sample_id", "idempotency_key"} <= set(command)
+
+
+async def test_a_rolled_back_agronomy_path_answers_the_established_not_found(
+    settings: Settings,
+) -> None:
+    """A client still calling M5 gets the same 404 an unknown path has always got.
+
+    Not a 405, not a 500 and not a redirect: a removed router leaves an ordinary
+    unrouted path, which is what an external client's retry loop already knows
+    how to read.
+    """
+    app = create_app(settings)
+
+    async with client(app) as http_client:
+        responses = {
+            path: await http_client.get(f"{API_V1_PREFIX}{path}")
+            for path in ("/crops", "/growing-recipes", "/grow-cycles", "/runtime-targets")
+        }
+        unknown = await http_client.get(f"{API_V1_PREFIX}/never-existed")
+
+    assert {path: response.status_code for path, response in responses.items()} == dict.fromkeys(
+        responses,
+        404,
+    )
+    for response in responses.values():
+        assert response.json() == unknown.json()
+
+
 async def test_startup_registers_no_simulation_service_or_task(settings: Settings) -> None:
     """The application owns an engine and a session factory, and no runtime.
 

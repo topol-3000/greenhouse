@@ -5,10 +5,9 @@ content while their delivery state may move once from ``pending`` to a terminal
 ``applied`` or ``rejected`` acknowledgement.
 
 The policy is embedded rather than referenced. ``policy_type`` names
-``hysteresis-v1`` and the two thresholds remain its legacy compatibility source;
-an active RuntimeTarget may supply the effective bounds without changing the
-loop. A separate policy table would add an entity, a version and an assignment
-before anything needs to address a policy on its own.
+``hysteresis-v1`` and the loop's two immutable thresholds are the only source of
+the band it decides on. A separate policy table would add an entity, a version
+and an assignment before anything needs to address a policy on its own.
 
 A command carries only the v1 pull-delivery lifecycle. There are no attempts,
 leases, expiry, push delivery, or broker concepts.
@@ -171,10 +170,8 @@ class Command(Base):
         idempotency_key: The decision in one stable string. Unique, and the
             whole of what keeps two concurrent evaluations of one sample from
             both acting.
-        control_loop_id: The loop whose effective bounds produced the decision.
-        runtime_target_id: The active target whose snapshot bounds produced the
-            decision, or ``NULL`` when legacy loop thresholds did. ``ON DELETE
-            RESTRICT`` preserves historical provenance after target closure.
+        control_loop_id: The loop whose immutable thresholds produced the
+            decision.
         trigger_sample_id: The temperature sample that caused it. ``ON DELETE
             RESTRICT``, like every other reference into the append-only stream.
         target_point_id: The ``fan_power`` point the command was addressed to.
@@ -209,12 +206,6 @@ class Command(Base):
         Uuid(),
         ForeignKey("control_loops.id", ondelete="RESTRICT"),
         nullable=False,
-    )
-    runtime_target_id: Mapped[UUID | None] = mapped_column(
-        Uuid(),
-        ForeignKey("runtime_targets.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
     )
     trigger_sample_id: Mapped[UUID] = mapped_column(
         Uuid(),

@@ -22,13 +22,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.gateways.service import GatewayConfigurationService
-from tests.integration.factories import (
-    activate_grow_cycle,
-    create_climate_growbox,
-    create_control_loop,
-    create_cycle_environment,
-    create_grow_cycle,
-)
+from tests.integration.factories import create_climate_growbox, create_control_loop
 
 API_URL: str = "/api/v1"
 EDGE_TELEMETRY_URL: str = f"{API_URL}/edge/telemetry"
@@ -194,100 +188,3 @@ async def test_the_dashboard_reads_its_frame_from_existing_endpoints(
     observed = [sample["observed_at"] for sample in history["items"]]
     assert observed == sorted(observed, reverse=True)
     assert history["items"][0]["value"] == temperature["value"]
-
-
-async def test_the_agronomic_frame_is_answered_by_the_existing_read_endpoints(
-    http_client: httpx.AsyncClient,
-) -> None:
-    """The three reads behind the agronomic section answer everything it renders.
-
-    This is the endpoint half of the section; which cycle is selected out of the
-    answer, and what is written into the markup, is asserted in
-    ``tests/javascript``. What matters here is that no fourth endpoint, no
-    aggregate and no private route is needed: every value the section shows is
-    already in a response some other client reads.
-    """
-    environment = await create_cycle_environment(http_client)
-    planned = await create_grow_cycle(http_client, environment)
-    await activate_grow_cycle(http_client, planned["id"])
-
-    active = await _get(
-        http_client,
-        f"{API_URL}/grow-cycles?facility_id={environment.facility_id}&status=active&limit=50",
-    )
-    cycle = active["items"][0]
-    version = await _get(http_client, f"{API_URL}/recipe-versions/{cycle['recipe_version_id']}")
-    recipe = await _get(http_client, f"{API_URL}/growing-recipes/{version['recipe_id']}")
-    requirements = {
-        requirement["metric_type"]: requirement for requirement in version["stage"]["requirements"]
-    }
-
-    # The zone is what lets a client show the cycle of the zone it is showing,
-    # rather than the first active cycle of the facility.
-    assert cycle["climate_zone_id"] == environment.climate_zone_id
-    assert cycle["status"] == "active"
-    assert cycle["name"] == "Basil Grow Cycle"
-    assert recipe["name"] == "Default basil recipe"
-    assert version["version_number"] == 1
-    assert cycle["current_stage"]["name"] == "Vegetative"
-    # The stage the cycle reports is one of the version's, which is what makes
-    # the two responses one graph rather than two unrelated records.
-    assert cycle["current_stage"]["id"] == version["stage"]["id"]
-
-    target = cycle["active_runtime_target"]
-    assert target is not None
-    assert target["effective_to"] is None
-    assert (target["lower_value"], target["upper_value"], target["unit"]) == (22.0, 26.0, "°C")
-    # The executable band is the snapshot's, and it is traceable to the exact
-    # requirement it was copied from without reading the recipe a second time.
-    assert target["target_requirement_id"] == requirements["air_temperature"]["id"]
-    assert (
-        requirements["air_humidity"]["min_value"],
-        requirements["air_humidity"]["max_value"],
-        requirements["air_humidity"]["unit"],
-    ) == (55.0, 70.0, "%")
-    assert (
-        requirements["photoperiod"]["target_value"],
-        requirements["photoperiod"]["unit"],
-    ) == (16.0, "h/day")
-
-    # The loop's own thresholds differ from the target's, so a section that read
-    # them instead of the snapshot would show 24-26 here.
-    loop = await _get(http_client, f"{API_URL}/control-loops/{environment.control_loop['id']}")
-    assert (loop["lower_threshold"], loop["upper_threshold"]) == (24.0, 26.0)
-
-
-async def test_a_completed_cycle_leaves_the_agronomic_frame_empty(
-    http_client: httpx.AsyncClient,
-) -> None:
-    """After an external completion the same reads answer with no active cycle.
-
-    Nothing notifies the page. The next refresh asks the same question and gets
-    a different answer, which is the whole of the terminal transition as a
-    reader experiences it.
-    """
-    environment = await create_cycle_environment(http_client)
-    planned = await create_grow_cycle(http_client, environment)
-    activated = await activate_grow_cycle(http_client, planned["id"])
-    target_id = activated["active_runtime_target"]["id"]
-
-    completed = await http_client.post(f"{API_URL}/grow-cycles/{planned['id']}/complete")
-    assert completed.status_code == 200, completed.text
-
-    active = await _get(
-        http_client,
-        f"{API_URL}/grow-cycles?facility_id={environment.facility_id}&status=active&limit=50",
-    )
-    cycle = await _get(http_client, f"{API_URL}/grow-cycles/{planned['id']}")
-    history = await _get(
-        http_client,
-        f"{API_URL}/runtime-targets?control_loop_id={environment.control_loop['id']}",
-    )
-
-    assert active["items"] == []
-    assert cycle["status"] == "completed"
-    # The target still exists and is still readable as history. What it is not
-    # is current, and the cycle representation is where that shows.
-    assert cycle["active_runtime_target"] is None
-    closed = next(item for item in history["items"] if item["id"] == target_id)
-    assert closed["effective_to"] is not None

@@ -111,57 +111,48 @@ async def test_the_script_only_reads_and_never_addresses_a_simulation_run(
     assert "acknowledged_at" in script
 
 
-async def test_the_page_carries_the_agronomic_section_and_no_control_for_it(
+async def test_the_delivered_page_carries_no_agronomic_section(
     http_client: httpx.AsyncClient,
 ) -> None:
-    """The delivered markup declares every field the section writes, and no action.
+    """The rolled-back grow cycle section is gone from what a browser receives.
 
-    The values are absent from the markup by design: they arrive from the public
-    API. What has to be here is the section that receives them — a field the
-    script writes to but the browser never receives is a value nobody sees.
+    Asserted on the served assets rather than on the files, because the page a
+    browser gets is the only place the section could reappear. The one action
+    the page has is still the one it had: reading again.
     """
     page = (await http_client.get("/")).text
+    stylesheet = (await http_client.get(STYLESHEET_PATH)).text
+    script = (await http_client.get(SCRIPT_PATH)).text
 
-    for name in (
-        "cycle-name",
-        "cycle-status",
-        "cycle-message",
-        "cycle-recipe",
-        "cycle-stage",
-        "cycle-temperature",
-        "cycle-temperature-source",
-        "cycle-humidity",
-        "cycle-photoperiod",
-    ):
-        assert f'data-field="{name}"' in page
-    # The one action the page has is still the one it had: reading again.
+    for asset in (page.lower(), stylesheet.lower(), script.lower()):
+        for removed in ("agronom", "grow cycle", "grow-cycle", "recipe", "crop", "photoperiod"):
+            assert removed not in asset
+    for name in ("cycle-name", "cycle-recipe", "cycle-temperature", "cycle-photoperiod"):
+        assert f'data-field="{name}"' not in page
     assert set(re.findall(r'data-action="(\w+)"', page)) == {"retry"}
     assert page.count("<button") == 1
-    # No crop, recipe, stage or cycle of any particular installation is written
-    # into the page a browser receives.
-    for compiled_in in ("basil", "vegetative", "22–26", "55–70", "16 h/day"):
-        assert compiled_in not in page.lower()
 
 
-async def test_the_script_reads_agronomy_and_mutates_none_of_it(
+async def test_the_script_reads_no_agronomy_endpoint_and_invents_none_of_its_own(
     http_client: httpx.AsyncClient,
 ) -> None:
-    """The client reads the accepted cycle and recipe APIs and calls no action.
+    """The client asks for point state, telemetry history and commands, and nothing else.
 
-    Provisioning a crop, publishing a recipe and running a cycle's lifecycle
-    belong to whichever client owns the installation. This page is not one: it
-    reports what those clients did and offers no way to do any of it.
+    ``runtime_target_id`` is checked separately from the words above: the field
+    is what a rebuilt provenance label would have to read, and it is the last
+    trace of M5 that a page could carry without naming a cycle at all.
     """
     script = (await http_client.get(SCRIPT_PATH)).text
 
-    assert "/grow-cycles?facility_id=" in script
-    assert "/recipe-versions/" in script
-    assert "/growing-recipes/" in script
-    # Only running cycles are asked for. The exact URL the page composes is
-    # asserted where the script is executed, in ``tests/javascript``.
-    assert "status=" in script
-    for mutation in ("/activate", "/complete", "/abort", "/crops"):
-        assert mutation not in script
+    for rolled_back in (
+        "/grow-cycles",
+        "/recipe-versions/",
+        "/growing-recipes/",
+        "/runtime-targets",
+        "runtime_target_id",
+        "active_runtime_target",
+    ):
+        assert rolled_back not in script
     # No endpoint was invented for the page either: everything it reads is a
     # collection or a resource another client already reads.
     for invented in ("/dashboard", "/summary", "/overview", "/internal"):
