@@ -52,19 +52,17 @@ async def test_the_public_reads_answer_on_an_empty_cloud(
     http_client: httpx.AsyncClient,
     connection: AsyncConnection,
 ) -> None:
-    """Health, the dashboard page and the domain collections all work with no data.
+    """Health and the domain collections all work with no data.
 
     A deployment that needed a seed before it could answer would fail here: an
     empty collection is a successful answer, not a missing precondition.
     """
     health = await http_client.get("/health")
-    page = await http_client.get("/")
     sites = await http_client.get("/api/v1/sites")
     gateways = await http_client.get("/api/v1/gateways/by-code/absent-gateway")
 
     assert health.status_code == 200, health.text
     assert health.json()["database"] == "ok"
-    assert page.status_code == 200
     assert sites.status_code == 200
     assert sites.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
     # The management plane is available and simply holds nothing yet.

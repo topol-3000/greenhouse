@@ -2,10 +2,10 @@
 
 This is the one test that owns the full cycle. It does not re-assert the focused
 guarantees the earlier stories already cover — the Edge error contract, the
-dashboard's delivery, the acknowledgement conflicts — it asserts the thing none
-of them can see on its own: that a growbox an external client provisioned
-through the public HTTP APIs, and drives only through them, produces
-`OFF → ON → OFF` in persisted state.
+acknowledgement conflicts — it asserts the thing none of them can see on its
+own: that a growbox an external client provisioned through the public HTTP
+APIs, and drives only through them, produces `OFF → ON → OFF` in persisted
+state.
 
 Nothing in the cloud creates any of it. The topology, the points, the
 assignments and the loop are all requests a client makes; every temperature
@@ -52,14 +52,14 @@ async def _get(http_client: httpx.AsyncClient, path: str) -> dict[str, Any]:
 
 
 async def _commands(http_client: httpx.AsyncClient, control_loop_id: str) -> list[dict[str, Any]]:
-    """Read the loop's applied commands, newest first, as the dashboard does."""
+    """Read the loop's applied commands, newest first, as an owner reader does."""
     return (await _get(http_client, f"{API_URL}/commands?control_loop_id={control_loop_id}"))[
         "items"
     ]
 
 
 async def _temperature(http_client: httpx.AsyncClient, point_id: str) -> float:
-    """Read the current temperature the way the dashboard reads it."""
+    """Read the current temperature the way an owner reader reads it."""
     return float((await _get(http_client, f"{API_URL}/points/{point_id}/state"))["value"])
 
 
@@ -245,7 +245,7 @@ async def test_an_externally_provisioned_growbox_closes_the_control_cycle(
     assert [command["desired_value"] for command in activity_commands] == [False, True]
     # A command an external gateway applied carries no ``executed_at``: that
     # field belongs to an in-process actuator. The acknowledgement is what dates
-    # it, which is what the dashboard's activity list orders by.
+    # it, which is what an activity list built on this API orders by.
     assert [command["state"] for command in activity_commands] == ["applied", "applied"]
     assert all("runtime_target_id" not in command for command in activity_commands)
     assert all(command["executed_at"] is None for command in activity_commands)

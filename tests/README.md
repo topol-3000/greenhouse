@@ -17,7 +17,6 @@ The rule these guidelines exist to enforce is short:
 tests/
 ├── conftest.py                 settings and logging fixtures
 ├── unit/                       no database, no HTTP
-├── javascript/                 the dashboard page, executed — see its README
 └── integration/
     ├── conftest.py             migrated database, rolled-back transaction, ASGI client
     ├── factories.py            shared request builders — the setup of every test
@@ -32,11 +31,11 @@ Integration tests run against a real PostgreSQL instance and skip when
 `DATABASE_URL` is unset. SQLite is not a substitute: the schema comes from the
 migrations, and several tests exist precisely to check what PostgreSQL enforces.
 
-`javascript/` is the same idea for the other language in this repository: it
-executes the delivered `dashboard.js` on Node and skips when Node is unset the
-way an integration test skips without a database. Run it with
-`node --test tests/javascript/*.test.mjs`, and read
-[`javascript/README.md`](javascript/README.md) before adding to it.
+Python is the only language here. This repository is an API-only backend: the
+owner interface lives in the separate `greenhouse-dashboard` repository, and its
+rendering is tested there. What this suite owns of that boundary is the backend
+half — that no frontend is served from here, and that the public API the
+dashboard reads still answers.
 
 ## Which layer asserts what
 
@@ -45,14 +44,13 @@ way an integration test skips without a database. Run it with
 | `unit/test_types.py` | Every accepted and rejected case of a shared value type — the slug pattern, the name bounds, the timezone lookup. | Anything about a particular entity. |
 | `unit/test_*_schemas.py` | That a schema is *wired* to those types, which fields are required, optional or nullable, what a partial update records, and which fields must reach the service unvalidated. | The value tables again. One representative rejected value per field is enough. |
 | `unit/test_pagination.py`, `unit/test_database_base.py` | Documented infrastructure contracts: the ordered and windowed statement, application-generated UUIDs, `timestamptz`, `VARCHAR` + `CHECK` enums, the naming convention. | Column definitions that no document names. |
-| `integration/api/` | The HTTP envelope itself — error shape, status mapping, pagination window, session commit and rollback — against a probe route, once. | Per-entity repetitions of those. |
+| `integration/api/` | The HTTP envelope itself — error shape, status mapping, pagination window, session commit and rollback — against a probe route, once; and the architectural boundary in `test_no_embedded_frontend.py`: no page, no asset, no static mount, and the OpenAPI document still generated and served. | Per-entity repetitions of those. |
 | `integration/<module>/` | Domain invariants through the real endpoints, each by its **refusal**; endpoint-specific filters; what PostgreSQL enforces and the service cannot. | Field validation, the pagination envelope or the archive lifecycle a second time. |
 | `integration/telemetry/` | The one module with no endpoint of its own: its tests call the service on the `session` fixture, commit or roll back as `get_session` would, and assert what reached the database. | The state response shape or the point rules a second time. |
 | `integration/test_migrations.py` | `upgrade head` on an empty database, `alembic check` clean, a `downgrade base` that really empties it, and — for a removal — that the removed objects are absent from PostgreSQL and that a populated database at the old head migrates without losing what it keeps. | Table shapes that a domain test already asserts. |
-| `integration/test_topology_demo.py`, `test_dashboard_read_model.py` | Each documented walkthrough works end to end in the documented order, and the endpoints one dashboard frame reads answer for an empty cloud, a configured facility and a measured one. | Any rule not visible from the scenario, and anything the page decides rather than the API. |
-| `javascript/` | What the page *does* with those answers: what it writes into which field, and how it behaves while loading and when a read fails. | The endpoints themselves, the response shapes or the assets' delivery. |
+| `integration/test_topology_demo.py`, `test_dashboard_read_model.py` | Each documented walkthrough works end to end in the documented order, and the endpoints one owner-dashboard frame reads answer for an empty cloud, a configured facility and a measured one. | Any rule not visible from the scenario, and anything the separate dashboard decides rather than the API. |
 | `integration/test_clean_startup.py`, `unit/test_clean_bootstrap.py` | That the cloud creates no data: the lifespan leaves every domain table empty, the public reads answer anyway, and no package, entry point, entrypoint or Compose service runs a seed. | What the provisioning endpoints themselves enforce. |
-| `integration/test_external_control_cycle.py` | One growbox provisioned through the public APIs and driven through the public Cloud ↔ Edge endpoints closes `OFF → ON → OFF`. | Anything a focused test already owns — page delivery, the Edge error contract, acknowledgement conflicts. |
+| `integration/test_external_control_cycle.py` | One growbox provisioned through the public APIs and driven through the public Cloud ↔ Edge endpoints closes `OFF → ON → OFF`. | Anything a focused test already owns — the Edge error contract, acknowledgement conflicts. |
 
 ## Rules of thumb
 

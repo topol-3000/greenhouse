@@ -15,9 +15,10 @@ the target and are opened only when the current task needs them.
   enum storage helpers, and base domain exceptions.
 - `infrastructure/database` owns the async engine, declarative metadata,
   request sessions, health checks, and database startup waiting.
-- `api` owns HTTP routing, dependencies, pagination, translation of domain errors
-  into the common response envelope, and delivery of the one same-origin
-  dashboard page from `api/static/`. Domain endpoints stay under `/api/v1`.
+- `api` owns HTTP routing, dependencies, pagination, and translation of domain
+  errors into the common response envelope. Domain endpoints stay under
+  `/api/v1`; `/health` and the OpenAPI routes are the only unversioned ones. It
+  serves no page, no asset and no static mount.
 - `topology` owns `Site`, `Facility`, `ControlZone`, and zone-point
   assignments.
 - `points` owns stable logical `Point` identities and `PointCurrentState`.
@@ -50,26 +51,46 @@ the target and are opened only when the current task needs them.
 Implemented: the growbox topology with stable logical point IDs, append-only
 telemetry, the current-state projection, telemetry history, generic hysteresis
 control-loop configuration, the automation flow that turns an accepted
-temperature into a fan command through the loop's own immutable thresholds, one
-same-origin dashboard page that reads what producers wrote, administrative HTTP
-provisioning of stable Edge gateways and their authorized logical points, and
-the Cloud ↔ Edge v1 telemetry and command-delivery API.
+temperature into a fan command through the loop's own immutable thresholds,
+administrative HTTP provisioning of stable Edge gateways and their authorized
+logical points, and the Cloud ↔ Edge v1 telemetry and command-delivery API.
 
 Milestone 5 was rolled back on 2026-08-03. `Crop`, `GrowingRecipe`,
 `RecipeVersion`, `RecipeStage`, `TargetRequirement`, `GrowCycle`,
 `GrowCycleZoneAssignment`, `GrowStageInstance` and `RuntimeTarget` are not
-implemented, `commands` carries no `runtime_target_id`, and the dashboard has no
-agronomic section. `migrations/versions/20260803_0019` is the forward
-compensating migration; the M5 migrations before it are published history and
-still run. See
+implemented and `commands` carries no `runtime_target_id`.
+`migrations/versions/20260803_0019` is the forward compensating migration; the
+M5 migrations before it are published history and still run. See
 [ADR 0002](decisions/0002-first-harvest-automation-boundary.md).
 
-Out of scope: executable environment simulation, cloud-owned demo or seed data,
-devices, MQTT, production authentication, users/RBAC/multi-tenancy, a frontend
-framework or build pipeline, distributed workers, WebSocket/SSE, a persisted
-event log, a dashboard aggregate endpoint, manual fan control, any endpoint that
-creates a command, and every agronomy, grow cycle and RuntimeTarget concept
-named above.
+Out of scope: any owner-facing frontend, asset, template, static mount or build
+pipeline; executable environment simulation; cloud-owned demo or seed data;
+devices; MQTT; production authentication; users/RBAC/multi-tenancy; distributed
+workers; WebSocket/SSE; a persisted event log; a dashboard aggregate endpoint;
+manual fan control; any endpoint that creates a command; and every agronomy,
+grow cycle and RuntimeTarget concept named above.
+
+## Repository boundaries
+
+Three repositories, and they meet only at published HTTP contracts.
+
+- `greenhouse` — this repository — is the cloud API/backend. Starting it exposes
+  the public HTTP API, `/health` and the OpenAPI routes, and no owner-facing
+  dashboard. Nothing here serves HTML, CSS, JavaScript or a bundle.
+- `greenhouse-dashboard` is the sole owner-facing UI and is maintained
+  separately. It is an ordinary client of the public `/api/v1` endpoints and
+  adds none of its own. Serving it from the same origin as this API — a
+  development proxy, or whatever a deployment uses — is that repository's
+  responsibility. The backend does not proxy, redirect to, embed or host it,
+  and does not carry CORS configuration for it.
+- `greenhouse-simulation-lab` owns executable environment simulation, and future
+  real edge producers are separate again. Both reach this cloud only as clients
+  of the public Cloud ↔ Edge v1 contract.
+
+A change that appears to need frontend code in this repository, or a backend
+change made only to suit the dashboard, is a boundary violation: report the
+incompatibility instead. See
+[ADR 0003](decisions/0003-api-only-backend-and-separate-owner-dashboard.md).
 
 ## The first harvest
 
@@ -120,9 +141,9 @@ creates no Basil Growbox of its own.
   failed application never rolls back the measurement that triggered it.
 - `fan_power` and `fan_running` are written only through the telemetry
   boundary. `fan_running` is an output and never a policy input.
-- The dashboard is a client of the public API. It adds no endpoint, takes the
-  facility that is configured, renders only persisted state, and offers no
-  lifecycle action: it is producer-independent and refreshes on a bounded poll.
+- The owner dashboard is an external client of the public API. No endpoint,
+  aggregate resource, response field or CORS setting is added to serve it, and
+  no backend behaviour depends on it existing.
 - Reuse constraints from `core/types.py`. An entity whose code or label is
   bounded differently builds its own annotation with `slug_type` or `name_type`
   rather than redeclaring the pattern. Enum columns use `VARCHAR` plus a `CHECK`

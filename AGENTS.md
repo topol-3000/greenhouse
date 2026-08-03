@@ -1,6 +1,9 @@
 # AI Greenhouse agent guide
 
-This repository contains the modular-monolith backend for AI Greenhouse.
+This repository contains the modular-monolith backend for AI Greenhouse. It is
+API-only: the owner interface lives in the separate `greenhouse-dashboard`
+repository and reaches this one over the public HTTP API. No frontend code,
+asset or build pipeline belongs here.
 
 ## Required reading order
 
@@ -25,13 +28,10 @@ docker compose run --rm api alembic upgrade head
 docker compose run --rm api alembic check
 uv run ruff check .
 uv run ruff format --check .
-node --test tests/javascript/*.test.mjs
 ```
 
 Integration tests require the real PostgreSQL service; SQLite is not a
-substitute. The dashboard's JavaScript tests require Node, which the API image
-does not carry, so `pytest` skips them inside Compose and they are run with the
-command above. Read [`tests/README.md`](tests/README.md) before adding tests.
+substitute. Read [`tests/README.md`](tests/README.md) before adding tests.
 
 ## Source ownership
 

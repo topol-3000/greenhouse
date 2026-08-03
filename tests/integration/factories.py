@@ -334,7 +334,7 @@ async def create_climate_growbox(
     """Build the four-point climate growbox an operational reader shows.
 
     The automation growbox plus the secondary humidity measurement: the loop
-    ignores it, and the dashboard renders it. Nothing here is cloud-owned
+    ignores it, and an owner reading the API sees it. Nothing here is cloud-owned
     demonstration data — it is provisioned through the public API exactly as an
     external client provisions its own installation.
 
