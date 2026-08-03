@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from ai_greenhouse.core.exceptions import DomainError
 from ai_greenhouse.edge.exceptions import EdgeContractError
@@ -26,6 +27,35 @@ VALIDATION_ERROR_CODE: str = "validation_error"
 VALIDATION_ERROR_MESSAGE: str = "Request validation failed"
 INTERNAL_ERROR_CODE: str = "internal_error"
 INTERNAL_ERROR_MESSAGE: str = "Internal server error"
+
+
+class ErrorValue(BaseModel):
+    """One failure in the envelope every domain endpoint answers with.
+
+    ``code`` is the stable identifier a client branches on; ``message`` is for a
+    person. ``details`` carries the structured context of that one code — the
+    refused field, the point and the machine-readable reason — and never SQL,
+    a driver message, a stack trace or a credential.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    message: str
+    details: dict[str, Any]
+
+
+class ErrorResponse(BaseModel):
+    """The documented error body of the public domain API.
+
+    Declared as a model so an operation can name it in ``responses`` and a
+    generated client sees the shape it has to handle, instead of discovering it
+    from a failed request.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    error: ErrorValue
 
 
 def error_body(

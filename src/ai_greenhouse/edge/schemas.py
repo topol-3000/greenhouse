@@ -16,6 +16,7 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 
 from ai_greenhouse.control.models import CommandState
+from ai_greenhouse.control.schemas import CommandRejectionReason
 from ai_greenhouse.points.models import PointDataType
 from ai_greenhouse.telemetry.schemas import TelemetryWriteOutcome
 
@@ -27,14 +28,6 @@ SourceId = Annotated[
         min_length=1,
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
-    ),
-]
-ReasonCode = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z][a-z0-9_]*$",
     ),
 ]
 
@@ -188,13 +181,13 @@ class EdgeCommandOutcome(StrEnum):
     REJECTED = "rejected"
 
 
-class EdgeRejectionReason(BaseModel):
-    """Stable machine code and human explanation of a rejection."""
+EdgeRejectionReason = CommandRejectionReason
+"""The v1 rejection reason is the domain's one rejection representation.
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    code: ReasonCode
-    message: Annotated[str, Field(min_length=1, max_length=500)]
+Aliased rather than redeclared: the gateway writes the code and message, the
+public command read model returns them, and a second class here would let the
+two published shapes drift apart while both claimed to describe one rejection.
+"""
 
 
 class EdgeCommandAcknowledgement(BaseModel):

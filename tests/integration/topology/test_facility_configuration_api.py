@@ -246,6 +246,7 @@ async def test_the_demo_growbox_is_returned_whole(http_client: httpx.AsyncClient
             "metric_type": fields["metric_type"],
             "data_type": fields["data_type"],
             "unit": fields.get("unit"),
+            "reported_point_id": point.get("reported_point_id"),
             "status": "active",
             "state": {"value": None, "quality": "no_data", "observed_at": None},
         }

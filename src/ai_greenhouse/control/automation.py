@@ -36,7 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_greenhouse.control.actuator import ActuationRequest, Actuator, LoopbackActuator
-from ai_greenhouse.control.models import Command, CommandState, ControlLoop
+from ai_greenhouse.control.models import Command, CommandSource, CommandState, ControlLoop
 from ai_greenhouse.control.policy import FanAction, evaluate_hysteresis
 from ai_greenhouse.control.repository import CommandRepository, ControlLoopRepository
 from ai_greenhouse.gateways.models import Gateway
@@ -224,7 +224,9 @@ class AutomationService:
 
         command = Command(
             id=command_id,
+            source=CommandSource.CONTROL_LOOP,
             idempotency_key=key,
+            control_zone_id=loop.control_zone_id,
             control_loop_id=loop.id,
             trigger_sample_id=record.id,
             target_point_id=loop.control_point_id,

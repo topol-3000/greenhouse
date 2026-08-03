@@ -213,6 +213,7 @@ class ZonePointAssignmentRead(BaseModel):
     point_kind: PointKind
     data_type: PointDataType
     unit: str | None
+    reported_point_id: UUID | None
 
     @classmethod
     def from_assignment(cls, assignment: ZonePointAssignment, point: Point) -> Self:
@@ -238,6 +239,7 @@ class ZonePointAssignmentRead(BaseModel):
             point_kind=point.point_kind,
             data_type=point.data_type,
             unit=point.unit,
+            reported_point_id=point.reported_point_id,
         )
 
 
@@ -334,7 +336,14 @@ class ConfigurationPointState(BaseModel):
 
 
 class ConfigurationPoint(BaseModel):
-    """One point of the configuration document, with its current state."""
+    """One point of the configuration document, with its current state.
+
+    ``reported_point_id`` is part of the document rather than of a separate
+    read: a client deciding whether a control point can be commanded needs the
+    point that reports it back, and needs it before any command exists. It is
+    ``null`` on every point that is not a control point and on a control point
+    whose feedback has not been configured.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -345,6 +354,7 @@ class ConfigurationPoint(BaseModel):
     metric_type: str
     data_type: PointDataType
     unit: str | None
+    reported_point_id: UUID | None
     status: StatusEnum
     state: ConfigurationPointState
 
@@ -370,6 +380,7 @@ class ConfigurationPoint(BaseModel):
             metric_type=point.metric_type,
             data_type=point.data_type,
             unit=point.unit,
+            reported_point_id=point.reported_point_id,
             status=point.status,
             state=ConfigurationPointState(
                 value=None if state is None else state.value,

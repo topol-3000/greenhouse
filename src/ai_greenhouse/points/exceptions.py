@@ -21,6 +21,7 @@ from ai_greenhouse.core.exceptions import (
 
 __all__ = [
     "FacilityNotInSiteError",
+    "InvalidReportedPointError",
     "InvalidValueRangeError",
     "PointCodeConflictError",
     "PointFacilityArchivedError",
@@ -165,6 +166,40 @@ class FacilityNotInSiteError(ConflictError):
         super().__init__(
             "Facility does not belong to the requested site",
             details={"site_id": str(site_id), "facility_id": str(facility_id)},
+        )
+
+
+class InvalidReportedPointError(ConflictError):
+    """The control point cannot be related to the status point it named.
+
+    One failure covers every rule of the relationship — the owning point is not
+    a control point, the named point is itself, is archived, is not a status
+    point, is not boolean, or belongs to another facility — because a client
+    needs the same two things in all of them: which point was refused, and why.
+    Both reach the caller in the details.
+
+    Reported as 409 rather than 422: both identifiers resolve and are
+    well-formed, and what the request contradicts is the relationship between
+    the two points it names.
+    """
+
+    code = "invalid_reported_point"
+
+    def __init__(self, point_id: UUID, reported_point_id: UUID, reason: str) -> None:
+        """Report the refused relationship.
+
+        Args:
+            point_id: The point that would carry the relationship.
+            reported_point_id: The point it named as its feedback.
+            reason: Stable machine-readable cause, safe to expose.
+        """
+        super().__init__(
+            "Point is not valid as a reported status point",
+            details={
+                "point_id": str(point_id),
+                "reported_point_id": str(reported_point_id),
+                "reason": reason,
+            },
         )
 
 

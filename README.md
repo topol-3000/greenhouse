@@ -667,6 +667,7 @@ curl http://localhost:8000/api/v1/facilities/9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d8
       "metric_type": "air_temperature",
       "data_type": "float",
       "unit": "°C",
+      "reported_point_id": null,
       "status": "active",
       "state": {"value": null, "quality": "no_data", "observed_at": null}
     }
@@ -677,6 +678,11 @@ curl http://localhost:8000/api/v1/facilities/9d1b0f13-6a2c-4d21-9f7e-1c5b0e2a4d8
 - a point's own fields appear once, in `points`. A zone lists only the links, so
   a point taking part in three zones is still described once and cannot be
   described three inconsistent ways;
+- `reported_point_id` is the point's explicit
+  [control → reported relationship](#the-control--reported-point-relationship).
+  A client discovering what it may command reads it from here, before any
+  command exists: it is `null` on everything that is not a control point, and on
+  a control point whose feedback has not been configured;
 - archived zones and points are left out. `?include_archived=true` keeps them,
   and `status` on each entry says which is which;
 - the document is assembled from a fixed number of queries whatever the size of
@@ -781,7 +787,8 @@ curl -X POST http://localhost:8000/api/v1/control-zones/4c8f2a01-77b3-4e0d-8a51-
   "point_name": "Air temperature",
   "point_kind": "measurement",
   "data_type": "float",
-  "unit": "°C"
+  "unit": "°C",
+  "reported_point_id": null
 }
 ```
 
@@ -863,6 +870,7 @@ curl -X POST http://localhost:8000/api/v1/points \
   "unit": "°C",
   "min_value": -20.0,
   "max_value": 60.0,
+  "reported_point_id": null,
   "status": "active",
   "created_at": "2026-07-28T09:44:02.118374Z",
   "updated_at": "2026-07-28T09:44:02.118376Z"
@@ -886,16 +894,67 @@ Rules worth knowing before calling it:
   site**, not within its facility. Two facilities on one site cannot both hold
   an `air_temperature`; two different sites can;
 - a point cannot be created inside an archived site or facility;
-- `PATCH` accepts `name`, `unit`, `min_value`, `max_value` and `status` only.
-  `code`, `site_id`, `facility_id`, `point_kind`, `metric_type` and `data_type`
-  all define what the point *means*: changing one would reinterpret every value
-  already recorded against the point without touching any of them;
-- `unit`, `min_value` and `max_value` are nullable, so in a `PATCH` an explicit
-  `null` clears them while omitting the field leaves the stored value alone.
-  The result is still validated against the point's `data_type`, so a range
-  left on a point cannot outlive the type that carries it;
+- `PATCH` accepts `name`, `unit`, `min_value`, `max_value`, `reported_point_id`
+  and `status` only. `code`, `site_id`, `facility_id`, `point_kind`,
+  `metric_type` and `data_type` all define what the point *means*: changing one
+  would reinterpret every value already recorded against the point without
+  touching any of them;
+- `unit`, `min_value`, `max_value` and `reported_point_id` are nullable, so in a
+  `PATCH` an explicit `null` clears them while omitting the field leaves the
+  stored value alone. The result is still validated against the point's
+  `data_type`, so a range left on a point cannot outlive the type that carries
+  it;
 - there is no `DELETE`, and a site or facility that still has points cannot be
   deleted at the database level either (`ON DELETE RESTRICT`).
+
+### The control → reported point relationship
+
+`reported_point_id` is the explicit answer to *which point says whether this
+actuator is really on*. A control point names it; nothing else carries it, and
+nothing derives it. It is the prerequisite for
+[a manual command](#manual-commands), and it is published by
+[the facility configuration](#facility-configuration) and by the zone
+composition, so a client can find it before any command exists.
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/points/$FAN_POWER_ID \
+  -H 'content-type: application/json' \
+  -d '{"reported_point_id": "'"$FAN_RUNNING_ID"'"}'
+```
+
+It can also be supplied in the creation body. Both paths apply the same rules:
+
+- only a `control` point may carry the relationship;
+- the related point must exist, be `active`, and be a `status` point;
+- its `data_type` must match the control point's, so a boolean actuator is
+  reported back as a boolean;
+- both points must belong to the same site **and** the same facility;
+- a point may not report itself.
+
+**Nothing about this relationship is ever inferred.** Not from a code, a name, a
+unit, a `metric_type`, a substring or a position in a zone's point list. A
+`fan_power` point and a `fan_running` point sitting beside each other in one zone
+are unrelated until someone relates them, and an existing `ControlLoop` naming
+both does not establish it either — the loop's own `control_point_id`/
+`status_point_id` pair stays exactly where it is and is not copied here. The
+migration that adds the column leaves it `NULL` everywhere for the same reason:
+a relationship inferred for some points and absent for others would be a rule
+that is true by accident.
+
+Two halves of the rule are held by PostgreSQL directly, because they fit in one
+row: `reported_point_id IS NULL OR point_kind = 'control'`, and
+`reported_point_id <> id`. The rest spans two rows and is enforced by the
+service.
+
+| Situation | HTTP | `error.code` | `details.reason` |
+| --- | --- | --- | --- |
+| `reported_point_id` references no point | 404 | `point_not_found` | — |
+| The owning point is not a `control` point | 409 | `invalid_reported_point` | `point_kind_not_control` |
+| A point named itself | 409 | `invalid_reported_point` | `reported_point_is_self` |
+| The related point is archived | 409 | `invalid_reported_point` | `reported_point_not_active` |
+| The related point is not a `status` point | 409 | `invalid_reported_point` | `reported_point_kind_mismatch` |
+| The two data types differ | 409 | `invalid_reported_point` | `reported_point_data_type_mismatch` |
+| The related point is in another site or facility | 409 | `invalid_reported_point` | `reported_point_not_in_facility` |
 
 Every point owns exactly one state projection, created with it in the same
 transaction. It starts empty, and no HTTP endpoint writes it: values reach it
@@ -1012,17 +1071,26 @@ Rules worth knowing before calling it:
 
 ## Commands API
 
-A command is one fan state change that a loop decided on and the actuator
-applied. It is written only once the actuator has reported back, so a stored
-command means the change took effect and both result samples are readable.
+A command is one boolean state change addressed to one logical control point. It
+has two possible authors, and it says which one it had:
+
+- a **control loop** decides one from an accepted measurement. Nothing a client
+  does creates one, which is what keeps "the fan follows the policy" true;
+- a **customer-facing client** asks for one directly, through the `POST` below,
+  for one explicitly configured actuator and one boolean value.
+
+Both kinds are written `pending` and leave the cloud through the same gateway
+resolution, the same [Edge command polling](#cloud--edge-contracts) and the same
+acknowledgement. There is no second queue and no second delivery path.
 
 ```http
-GET /api/v1/commands?control_loop_id=&trigger_sample_id=&limit=
-GET /api/v1/commands/{command_id}
+POST /api/v1/commands
+GET  /api/v1/commands?control_zone_id=&control_loop_id=&trigger_sample_id=&target_point_id=&source=&idempotency_key=&limit=
+GET  /api/v1/commands/{command_id}
 ```
 
 ```bash
-curl 'http://localhost:8000/api/v1/commands?control_loop_id=e03c6179-2f50-4cb4-d8ea-1b46094253af&limit=1'
+curl 'http://localhost:8000/api/v1/commands?control_zone_id=7c0f2b91-4d5e-4a03-9c18-2f6b8e1d4a72&limit=1'
 ```
 
 ```json
@@ -1030,44 +1098,214 @@ curl 'http://localhost:8000/api/v1/commands?control_loop_id=e03c6179-2f50-4cb4-d
   "items": [
     {
       "id": "2fbf6c2f-3ed5-5207-b1e5-069f900506a0",
+      "source": "control_loop",
       "idempotency_key": "hysteresis-v1:e03c6179-2f50-4cb4-d8ea-1b46094253af:08cfcf34-39d1-5052-b4ca-964cc1d0e0ee:off",
+      "control_zone_id": "7c0f2b91-4d5e-4a03-9c18-2f6b8e1d4a72",
       "control_loop_id": "e03c6179-2f50-4cb4-d8ea-1b46094253af",
       "trigger_sample_id": "08cfcf34-39d1-5052-b4ca-964cc1d0e0ee",
       "target_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
+      "reported_point_id": "3b5a1d90-77c2-4e6f-b8a1-0d4e9c2f5613",
+      "gateway_id": "1f2e3d4c-5b6a-4798-8c0d-1e2f3a4b5c6d",
       "desired_value": false,
-      "result_control_sample_id": "a9ebc3cf-6392-5c54-bffe-23c09523928a",
-      "result_status_sample_id": "8a0a13a1-7ee3-52ed-8f2d-28f86f6026af",
-      "executed_at": "2026-07-30T09:02:14.668592Z",
+      "state": "applied",
+      "result_control_sample_id": null,
+      "result_status_sample_id": null,
+      "issued_at": "2026-07-30T09:02:14.660118Z",
+      "executed_at": null,
+      "acknowledged_at": "2026-07-30T09:02:16.204915Z",
+      "rejection_reason": null,
       "created_at": "2026-07-30T09:02:14.674984Z"
     }
   ]
 }
 ```
 
-Rules worth knowing before calling it:
+### The lifecycle
 
-- **there is no `POST`.** A command is a consequence of accepted telemetry, and
-  a client that could create one would be a second author of the fan state;
-- the list is newest first, ordered `created_at DESC, id DESC`, and carries no
-  total. `limit` defaults to `100` and must be between `1` and `1000`;
-- a command is created only when a *new* sample became the point's current
-  state. A re-delivered or late measurement changes nothing and decides nothing;
-- the band a command was decided against is the loop's, and the loop is
-  immutable, so the command names the loop and nothing else. There is one
-  source of the decision and therefore no source field;
-- `idempotency_key` is
-  `hysteresis-v1:{control_loop_id}:{trigger_sample_id}:{on|off}` and is unique.
-  It is what bounds two concurrent evaluations of one measurement to one action;
-- the three sample identifiers are returned rather than embedded. Read the
-  samples themselves through `GET /api/v1/points/{point_id}/telemetry`;
-- only commands that were applied in full are stored. If the actuator fails, the
-  command and both result samples are rolled back together — and the temperature
-  that triggered them stays recorded, because it is what explains the attempt.
+`state` is the delivery lifecycle and has exactly three values. No speculative
+state — `failed`, `expired`, `cancelled`, `unavailable` — exists, because the
+backend has no transition that would produce one.
+
+| `state` | Terminal | Meaning |
+| --- | --- | --- |
+| `pending` | no | Written and waiting. The gateway may or may not have collected it yet. |
+| `applied` | **yes** | The gateway reported that it carried the command out. |
+| `rejected` | **yes** | The gateway reported that it could not, with a typed reason. |
+
+Three things follow, and a customer-facing client that gets any of them wrong
+will show the wrong thing:
+
+- **HTTP acceptance is not physical application.** `201` means one command was
+  persisted. Nothing has been sent anywhere yet, and nothing has moved;
+- **`acknowledged_at` is receipt, not success.** A `pending` command with an
+  `acknowledged_at` has reached the Edge and nothing more. It stays non-terminal
+  until it becomes `applied` or `rejected`;
+- **the desired value is not the reported state.** `desired_value` is what was
+  asked for. What the actuator actually reports is the reported point's own
+  state, read separately through `GET /api/v1/points/{point_id}/state`. The two
+  can disagree for as long as the physical change takes — or forever, if it
+  never happens — and neither one is derived from the other. Acknowledging a
+  command writes no telemetry and touches no point state.
+
+`rejection_reason` is typed rather than an open object: `{"code": "...",
+"message": "..."}`, where `code` matches `^[a-z][a-z0-9_]*$`. It is the same
+representation the gateway supplies over the Cloud ↔ Edge v1 acknowledgement, so
+there is one shape and not two that can drift.
+
+An absent acknowledgement means nothing has been reported. It is **not** evidence
+that the Edge is offline, and this API never claims it is.
+
+### Manual commands
+
+`POST /api/v1/commands` is the boundary a customer-facing client switches one
+actuator through. It is on/off only: there is no numeric, percentage, dimming,
+speed or free-form JSON control anywhere in this backend.
+
+```bash
+curl -i -X POST http://localhost:8000/api/v1/commands \
+  -H 'content-type: application/json' \
+  -H 'Idempotency-Key: 6f1c2a80-9e34-4b57-8d21-0a7f5c3e9b46' \
+  -d '{"control_zone_id": "7c0f2b91-4d5e-4a03-9c18-2f6b8e1d4a72",
+       "target_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
+       "desired_value": true}'
+```
+
+```json
+{
+  "outcome": "created",
+  "command": {
+    "id": "d4b8e1a2-3c57-4f09-b6d8-2e5a7c1f4903",
+    "source": "manual",
+    "idempotency_key": "6f1c2a80-9e34-4b57-8d21-0a7f5c3e9b46",
+    "control_zone_id": "7c0f2b91-4d5e-4a03-9c18-2f6b8e1d4a72",
+    "control_loop_id": null,
+    "trigger_sample_id": null,
+    "target_point_id": "c81a4f57-0d3e-4a92-b6c8-9f24e7031a5d",
+    "reported_point_id": "3b5a1d90-77c2-4e6f-b8a1-0d4e9c2f5613",
+    "gateway_id": "1f2e3d4c-5b6a-4798-8c0d-1e2f3a4b5c6d",
+    "desired_value": true,
+    "state": "pending",
+    "result_control_sample_id": null,
+    "result_status_sample_id": null,
+    "issued_at": "2026-08-03T09:14:02.118374Z",
+    "executed_at": null,
+    "acknowledged_at": null,
+    "rejection_reason": null,
+    "created_at": "2026-08-03T09:14:02.118374Z"
+  }
+}
+```
+
+The body is exactly three fields — `control_zone_id`, `target_point_id` and
+`desired_value` — and refuses any other. `desired_value` is **strictly**
+boolean: `1`, `"on"` and `"true"` are refused rather than coerced, which is the
+same rule the telemetry boundary applies to a boolean point's value.
+
+A manual command carries `source: "manual"`, and `control_loop_id` and
+`trigger_sample_id` are `null`. Nothing fabricates a loop or a trigger sample to
+fill them: a manual command is not a decision, and saying otherwise would make
+every automatic command's provenance meaningless too.
+
+#### Eligibility
+
+Every rule below is applied to persisted domain data, and the refusal names the
+reason:
+
+| Situation | HTTP | `error.code` | `details.reason` |
+| --- | --- | --- | --- |
+| Body invalid, or `desired_value` not boolean | 422 | `validation_error` | — |
+| `Idempotency-Key` missing or not a UUID | 422 | `validation_error` | — |
+| `control_zone_id` references no zone | 404 | `control_zone_not_found` | — |
+| `target_point_id` references no point | 404 | `point_not_found` | — |
+| The zone is archived | 409 | `invalid_manual_command_target` | `zone_not_active` |
+| The point belongs to another facility | 409 | `invalid_manual_command_target` | `point_not_in_zone_facility` |
+| The point is not assigned to that zone | 409 | `invalid_manual_command_target` | `point_not_assigned_to_zone` |
+| It is assigned, but not as `control_output` | 409 | `invalid_manual_command_target` | `assignment_role_not_control_output` |
+| Its `point_kind` is not `control` | 409 | `invalid_manual_command_target` | `point_kind_not_control` |
+| It is archived | 409 | `invalid_manual_command_target` | `point_not_active` |
+| Its `data_type` is not `boolean` | 409 | `invalid_manual_command_target` | `point_data_type_not_boolean` |
+| It names no reported point | 409 | `invalid_manual_command_target` | `reported_point_not_configured` |
+| Its reported point is missing, archived, not a status point or not boolean | 409 | `invalid_manual_command_target` | `reported_point_not_found`, `reported_point_not_active`, `reported_point_kind_mismatch`, `reported_point_data_type_not_boolean` |
+| No active gateway is authorized for both points | 409 | `invalid_manual_command_target` | `no_gateway_for_command_points` |
+| The key already names a different request | 409 | `idempotency_key_conflict` | — |
+
+**A point's code, name, unit, `metric_type` or position in a zone takes part in
+none of this.** A measurement point called "Fan Power" with `metric_type:
+fan_power` is refused exactly as firmly as one called anything else.
+
+Two further rules the table cannot show:
+
+- creation is atomic. A refused request leaves no row, has not consumed its
+  idempotency key, and can be corrected and retried with the same key;
+- creation never marks a command applied, never writes telemetry and never
+  touches a point's current state. It is not a control loop either: no
+  `ControlLoop` is created, read or changed by a manual command.
+
+#### Idempotency
+
+`Idempotency-Key` is a **required request header** carrying a **UUID**. The
+server never generates or replaces a key a client supplied.
+
+| Request | Answer |
+| --- | --- |
+| First time the key is seen | `201`, `outcome: "created"` |
+| Same key, same zone, target and value | `200`, `outcome: "existing"`, the stored command |
+| Same key, anything else different | `409 idempotency_key_conflict`, naming the stored `command_id` |
+
+The identity of a logical request is its **source, zone, target point and
+desired value**. Everything else about a stored command — its state, its
+acknowledgement, its gateway — is what happened *to* it, so a replay long after
+the fact returns the command as it is *now*, terminal state included, and still
+causes nothing.
+
+A replay writes no row and offers the Edge no second delivery, so retrying a
+request whose response was lost cannot switch an actuator twice. The guarantee is
+the unique index on `commands.idempotency_key` and one `INSERT ... ON CONFLICT DO
+NOTHING`, not a lookup performed a moment before the insert: concurrent identical
+requests converge on one row, and concurrent conflicting ones still cannot
+produce two.
+
+If the creation response is lost entirely, the key is enough to recover:
+
+```bash
+curl 'http://localhost:8000/api/v1/commands?idempotency_key=6f1c2a80-9e34-4b57-8d21-0a7f5c3e9b46'
+```
+
+Uniqueness makes the answer zero commands (the request never landed) or exactly
+one (it did).
+
+### Reading commands
+
+- **`POST` creates manual commands only.** A control-loop command is still a
+  consequence of accepted telemetry and cannot be requested;
+- the list is newest first, ordered `created_at DESC, id DESC` — an order the
+  query itself enforces — and carries no total. `limit` defaults to `100` and
+  must be between `1` and `1000`;
+- every filter is an exact match and several may be combined: `control_zone_id`,
+  `control_loop_id`, `trigger_sample_id`, `target_point_id`, `source` and
+  `idempotency_key`;
+- `source` is `control_loop` or `manual`, read from the stored discriminator
+  rather than guessed from a null `control_loop_id`;
+- an automatic command is created only when a *new* sample became the point's
+  current state. A re-delivered or late measurement changes nothing;
+- an automatic command's `idempotency_key` is
+  `hysteresis-v1:{control_loop_id}:{trigger_sample_id}:{on|off}`; a manual
+  command's is the UUID the client supplied. Both live in one unique column;
+- `result_control_sample_id` and `result_status_sample_id` are written only by
+  the in-process loopback actuator, and are `null` for everything a gateway
+  carries out. `executed_at` follows the same rule; `acknowledged_at` is what
+  dates a gateway-delivered command;
+- the sample identifiers are returned rather than embedded. Read the samples
+  themselves through `GET /api/v1/points/{point_id}/telemetry`.
 
 | Situation | HTTP | `error.code` |
 | --- | --- | --- |
 | `limit` outside `1..1000` | 422 | `validation_error` |
 | Command does not exist | 404 | `command_not_found` |
+
+**The Customer Portal UI is not in this repository.** This is the backend
+capability it needs; the interface itself lives in `greenhouse-dashboard` and is
+built there.
 
 ## Boundaries
 
@@ -1099,11 +1337,16 @@ its own, at startup or anywhere else. The following are not part of the system:
   SSE: a monitoring client polls the existing read resources;
 - no CORS configuration: a client that needs this API on its own origin proxies
   it, which is that client's concern and not the backend's;
-- no endpoint that creates a command: a command is a consequence of accepted
-  telemetry, never something a client asks for;
-- no manual fan control, no delivery attempts, retries or expiry, and no
-  separate execution record: only commands that were applied in full are
-  stored;
+- no way for a client to create an *automatic* command: a control-loop command
+  is a consequence of accepted telemetry, and `POST /api/v1/commands` creates
+  manual commands only;
+- no numeric, percentage, dimming, speed or free-form JSON command submission:
+  [manual control](#manual-commands) is boolean on/off, for one explicitly
+  configured control point at a time;
+- no delivery attempts, retries, leases or expiry, and no separate execution
+  record: a command carries the pull-delivery lifecycle and nothing else;
+- no synchronous wait for physical application, and no Activity feed, command
+  analytics or aggregation endpoint built on command history;
 - no policy versions, schedules, PID or rules engine: a control loop carries
   its own `hysteresis-v1` thresholds and nothing else;
 - no in-process producer and no distributed workers: the application owns no

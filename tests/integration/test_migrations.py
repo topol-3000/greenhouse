@@ -82,6 +82,9 @@ REVISION_BEFORE_M5: str = "20260731_0015"
 M5_HEAD_REVISION: str = "20260801_0018"
 """The last Milestone 5 revision, and what a deployed M5 database is at."""
 
+MANUAL_COMMAND_PREDECESSOR: str = "20260803_0019"
+"""The last revision whose commands could only have been decided by a loop."""
+
 
 def run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProcess[str]:
     """Run one Alembic command against the given database.
@@ -198,6 +201,30 @@ async def command_runtime_target(database_url: str, command_id: UUID) -> UUID | 
                 text("SELECT runtime_target_id FROM commands WHERE id = :command_id"),
                 {"command_id": command_id},
             )
+    finally:
+        await engine.dispose()
+
+
+async def command_provenance(database_url: str, command_id: UUID) -> tuple[str, UUID]:
+    """Read one command's source and the zone the migration gave it.
+
+    Args:
+        database_url: The database to inspect, at ``20260803_0020`` or later.
+        command_id: The command to read.
+
+    Returns:
+        The stored ``source`` and ``control_zone_id``.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text("SELECT source, control_zone_id FROM commands WHERE id = :command_id"),
+                    {"command_id": command_id},
+                )
+            ).one()
+            return str(row.source), row.control_zone_id
     finally:
         await engine.dispose()
 
@@ -790,3 +817,64 @@ async def test_removing_the_simulation_domain_preserves_recorded_data(
     assert await recorded_data(scratch_database) == EXPECTED_RECORDED_DATA
     assert "simulation_run_id" not in await column_names(scratch_database, "telemetry_samples")
     assert run_alembic(scratch_database, "check").returncode == 0
+
+
+async def test_the_manual_command_boundary_backfills_existing_commands(
+    scratch_database: str,
+) -> None:
+    """An automatic command written before the boundary existed keeps working.
+
+    The row is created on the schema that has no ``source`` and no
+    ``control_zone_id``, then migrated. It has to come out as a control-loop
+    command carrying the zone of the loop that decided it — and the backfill has
+    to reach that zone through ``control_loops.control_zone_id`` and not through
+    a name, a code or an ordering, which is why the assertion names the zone the
+    fixture actually wired the loop to.
+
+    The round trip is the second half. ``20260803_0020`` makes two columns
+    nullable, so a downgrade that failed to restore ``NOT NULL`` would only
+    surface on the second upgrade.
+    """
+    before = run_alembic(scratch_database, "upgrade", REVISION_BEFORE_SIMULATION_REMOVAL)
+    assert before.returncode == 0, before.stderr
+    await seed_pre_removal_rows(scratch_database)
+
+    upgrade = run_alembic(scratch_database, "upgrade", "head")
+    preserved = await recorded_data(scratch_database)
+    source, control_zone_id = await command_provenance(scratch_database, COMMAND_ID)
+    downgrade = run_alembic(scratch_database, "downgrade", MANUAL_COMMAND_PREDECESSOR)
+    commands_after_downgrade = await column_names(scratch_database, "commands")
+    points_after_downgrade = await column_names(scratch_database, "points")
+    upgrade_again = run_alembic(scratch_database, "upgrade", "head")
+
+    assert upgrade.returncode == 0, upgrade.stderr
+    assert preserved == EXPECTED_RECORDED_DATA
+    assert (source, control_zone_id) == ("control_loop", ZONE_ID)
+    assert downgrade.returncode == 0, downgrade.stderr
+    assert {"source", "control_zone_id"} & commands_after_downgrade == set()
+    assert "reported_point_id" not in points_after_downgrade
+    assert upgrade_again.returncode == 0, upgrade_again.stderr
+    assert await recorded_data(scratch_database) == EXPECTED_RECORDED_DATA
+    assert run_alembic(scratch_database, "check").returncode == 0
+
+
+async def test_the_relationship_and_source_constraints_are_enforced_by_postgresql(
+    scratch_database: str,
+) -> None:
+    """The invariants that fit in one row are held by the schema, not only by code.
+
+    A manual command may not carry a control loop or a trigger sample, and a
+    control-loop command may not be missing them. Both halves are attempted
+    directly against the constraint, because a future write path that bypassed
+    the service would still have to get past it.
+    """
+    assert run_alembic(scratch_database, "upgrade", "head").returncode == 0
+    constraints, indexes = await relation_names(scratch_database)
+
+    assert "ck_commands_source_relationships" in constraints
+    assert "ck_commands_source" in constraints
+    assert "ck_points_reported_point_requires_control_kind" in constraints
+    assert "ck_points_reported_point_id_not_self" in constraints
+    assert "ix_commands_control_zone_id_created_at_id" in indexes
+    assert "ix_commands_target_point_id" in indexes
+    assert "uq_commands_idempotency_key" in constraints

@@ -17,6 +17,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Numeric,
@@ -39,6 +40,18 @@ from ai_greenhouse.infrastructure.database.base import (
 
 DEFAULT_REVISION: int = 0
 """Revision every state row starts at, before any telemetry has replaced it."""
+
+REPORTED_POINT_KIND_CONSTRAINT_NAME: str = "reported_point_requires_control_kind"
+"""Only a control point may name the point that reports its state back.
+
+The rule a client actually needs — that the *named* point is an active boolean
+status point of the same facility — spans two rows and stays in the service. The
+half that is visible in one row is expressed here, so a measurement point can
+never carry the relationship whatever writes it.
+"""
+
+REPORTED_POINT_SELF_CONSTRAINT_NAME: str = "reported_point_id_not_self"
+"""A point never reports its own state back. One row, so the database says it."""
 
 
 class PointKind(StrEnum):
@@ -115,10 +128,27 @@ class Point(UUIDPrimaryKeyMixin, TimestampMixin, StatusMixin, Base):
             boolean ones; the rule is applied in the service.
         min_value: Lower end of the plausible range, numeric points only.
         max_value: Upper end of the plausible range, numeric points only.
+        reported_point_id: The status point that reports this control point's
+            actual state back, when the relationship has been configured. It is
+            the explicit answer to "which point says whether this actuator is
+            really on", and the only one: it is never inferred from a code, a
+            name, a unit, a metric or a position in a zone. ``NULL`` on every
+            point that is not a control point, and on a control point whose
+            feedback has not been configured yet.
     """
 
     __tablename__ = "points"
-    __table_args__ = (UniqueConstraint("site_id", "code", name="uq_points_site_id_code"),)
+    __table_args__ = (
+        UniqueConstraint("site_id", "code", name="uq_points_site_id_code"),
+        CheckConstraint(
+            "reported_point_id IS NULL OR point_kind = 'control'",
+            name=REPORTED_POINT_KIND_CONSTRAINT_NAME,
+        ),
+        CheckConstraint(
+            "reported_point_id IS NULL OR reported_point_id <> id",
+            name=REPORTED_POINT_SELF_CONSTRAINT_NAME,
+        ),
+    )
 
     site_id: Mapped[UUID] = mapped_column(
         Uuid(),
@@ -153,6 +183,12 @@ class Point(UUIDPrimaryKeyMixin, TimestampMixin, StatusMixin, Base):
     unit: Mapped[str | None] = mapped_column(String(MAX_UNIT_LENGTH), nullable=True)
     min_value: Mapped[Decimal | None] = mapped_column(Numeric(), nullable=True)
     max_value: Mapped[Decimal | None] = mapped_column(Numeric(), nullable=True)
+    reported_point_id: Mapped[UUID | None] = mapped_column(
+        Uuid(),
+        ForeignKey("points.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
 
     def __repr__(self) -> str:
         """Return a debug-friendly representation without the full row."""

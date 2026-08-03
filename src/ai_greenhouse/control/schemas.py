@@ -4,16 +4,39 @@
 field a client can only set to a single value is a field that will be set to
 something else the moment a second policy exists. It is returned, so a reader
 never has to guess which rule a loop evaluates.
+
+The command representation serves both sources truthfully. A manual command has
+no control loop and no trigger sample, so both are nullable rather than filled
+with a value that would describe a decision nobody made.
 """
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    StrictBool,
+    StringConstraints,
+    model_validator,
+)
 
-from ai_greenhouse.control.models import CommandState, ControlPolicyType
+from ai_greenhouse.control.models import CommandSource, CommandState, ControlPolicyType
+
+ReasonCode = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    ),
+]
+"""Stable machine-readable cause of a terminal rejection."""
 
 Threshold = Annotated[
     Decimal,
@@ -84,21 +107,83 @@ class ControlLoopRead(BaseModel):
     created_at: datetime
 
 
+class CommandRejectionReason(BaseModel):
+    """Why a command reached its terminal failure.
+
+    One representation, shared by the public command read model and the Cloud ↔
+    Edge acknowledgement that produces it. A rejection has a stable code a
+    client can branch on and a message a person can read, and never an
+    open-ended object whose keys a caller has to guess.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: ReasonCode
+    message: Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class ManualCommandCreate(BaseModel):
+    """Body accepted by ``POST /api/v1/commands``.
+
+    Boolean on/off only. ``desired_value`` is a ``bool`` and not a typed value
+    object, a number or free-form JSON: this boundary exists so a customer can
+    switch one actuator, and a shape that could carry a dimming level would be
+    a contract for behaviour the backend does not have.
+
+    It is strictly boolean, so ``1``, ``"on"`` and ``"true"`` are refused rather
+    than coerced. That is the same rule the telemetry boundary already applies
+    to a boolean point's value: a ``bool`` is not an integer, and a request that
+    has to be guessed at is a request that can be guessed wrong.
+
+    The idempotency key is not here. It travels in the required
+    ``Idempotency-Key`` header, where a client that retries a lost request does
+    not have to rebuild the body to keep it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    control_zone_id: UUID = Field(
+        description="The control zone the target point is assigned to.",
+    )
+    target_point_id: UUID = Field(
+        description=(
+            "The active boolean control point to command. It must be assigned to"
+            " control_zone_id in the control_output role and must name a reported"
+            " status point."
+        ),
+    )
+    desired_value: StrictBool = Field(
+        description="The state asked for. true is on. It is a request, never a reading.",
+    )
+
+
 class CommandRead(BaseModel):
-    """One applied command, with every identifier its chain is followed by.
+    """One command, whatever asked for it, with every identifier it is followed by.
 
     All three sample identifiers are returned rather than joined into embedded
     samples: the telemetry history endpoint already reads a sample, and
     duplicating it here would give one value two representations that could
     disagree.
+
+    ``desired_value`` is a request and never a reading. What the actuator
+    actually reports is the reported point's own state, read through
+    ``GET /api/v1/points/{point_id}/state``; the two are deliberately separate
+    and can disagree for as long as the physical change takes, or forever if it
+    never happens.
+
+    ``state`` is the delivery lifecycle. ``pending`` is non-terminal; ``applied``
+    and ``rejected`` are terminal. ``acknowledged_at`` on a pending command means
+    the Edge received it, not that anything moved.
     """
 
     model_config = ConfigDict(from_attributes=True, frozen=True)
 
     id: UUID
+    source: CommandSource
     idempotency_key: str
-    control_loop_id: UUID
-    trigger_sample_id: UUID
+    control_zone_id: UUID
+    control_loop_id: UUID | None
+    trigger_sample_id: UUID | None
     target_point_id: UUID
     reported_point_id: UUID
     gateway_id: UUID | None
@@ -109,8 +194,33 @@ class CommandRead(BaseModel):
     issued_at: datetime
     executed_at: datetime | None
     acknowledged_at: datetime | None
-    rejection_reason: dict[str, str] | None
+    rejection_reason: CommandRejectionReason | None
     created_at: datetime
+
+
+class ManualCommandOutcome(StrEnum):
+    """Whether an idempotent manual request created or replayed a command."""
+
+    CREATED = "created"
+    EXISTING = "existing"
+
+
+class ManualCommandAcceptanceRead(BaseModel):
+    """Result of one idempotent manual command request.
+
+    The outcome is carried in the body as well as in the status code, so a
+    client behind a proxy that rewrites statuses can still tell a first creation
+    from a replay. ``existing`` means the stored command is returned unchanged
+    and nothing was written or enqueued a second time.
+
+    Acceptance is an acceptance of the *request*. It does not mean the actuator
+    moved: the command is pending until the Edge reports it applied or rejected.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    outcome: ManualCommandOutcome
+    command: CommandRead
 
 
 class CommandListRead(BaseModel):

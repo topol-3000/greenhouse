@@ -17,8 +17,10 @@ __all__ = [
     "CommandNotFoundError",
     "ControlLoopExistsError",
     "ControlLoopNotFoundError",
+    "IdempotencyKeyConflictError",
     "InvalidControlLoopPointError",
     "InvalidControlLoopZoneError",
+    "InvalidManualCommandTargetError",
 ]
 
 
@@ -94,6 +96,66 @@ class InvalidControlLoopZoneError(ConflictError):
         super().__init__(
             "Control zone is not valid for a hysteresis control loop",
             details={"control_zone_id": str(control_zone_id), "reason": reason},
+        )
+
+
+class InvalidManualCommandTargetError(ConflictError):
+    """The point named by a manual command request cannot be commanded.
+
+    One failure covers every eligibility rule — not assigned to the zone, the
+    wrong assignment role, not a control point, archived, not boolean, without a
+    configured reported point, with a reported point that is no longer usable,
+    or with no gateway able to carry the command out — because a client needs
+    the same two things in all of them: which point was refused, and why. Both
+    reach the caller in the details.
+
+    Reported as 409 rather than 422: the zone and the point both resolve and the
+    body is well-formed. What the request contradicts is the configured state of
+    the point it names.
+    """
+
+    code = "invalid_manual_command_target"
+
+    def __init__(self, control_zone_id: UUID, target_point_id: UUID, reason: str) -> None:
+        """Report the refused target.
+
+        Args:
+            control_zone_id: The zone named by the request.
+            target_point_id: The point that cannot be commanded.
+            reason: Stable machine-readable cause, safe to expose.
+        """
+        super().__init__(
+            "Point cannot receive a manual command",
+            details={
+                "control_zone_id": str(control_zone_id),
+                "target_point_id": str(target_point_id),
+                "reason": reason,
+            },
+        )
+
+
+class IdempotencyKeyConflictError(ConflictError):
+    """The idempotency key already identifies a different logical request.
+
+    A key names one request, not one attempt. Reusing it for another zone,
+    another point, another desired value or another source is a client defect,
+    and answering it with the stored command would carry out something the
+    caller did not ask for. The stored command's identifier is reported so the
+    caller can see what the key already means.
+    """
+
+    code = "idempotency_key_conflict"
+
+    def __init__(self, idempotency_key: str, command_id: UUID) -> None:
+        """Report the reused key.
+
+        Args:
+            idempotency_key: The key the request supplied.
+            command_id: The command it already identifies.
+        """
+        super().__init__(
+            "Idempotency key already identifies a different command",
+            details={"idempotency_key": idempotency_key, "command_id": str(command_id)},
         )
 
 
