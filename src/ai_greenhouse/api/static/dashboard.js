@@ -17,9 +17,7 @@
  *    equipment — and it starts, stops and controls nothing.
  * 3. A failed read is a banner, not a blank page. The last measured values that
  *    were valid stay on screen, and the reader is offered a retry instead of an
- *    exception. The agronomic section is the exception to the exception: it
- *    states which cycle is running *now*, so a failure empties it rather than
- *    leaving a claim nothing currently supports.
+ *    exception.
  * 4. One cycle at a time, forever. A refresh is scheduled only once the previous
  *    one has finished, so polling cannot overlap itself, and it keeps going
  *    whatever the state of the data: there is no lifecycle signal to gate it on.
@@ -40,71 +38,6 @@ const POINT_CODES = {
 };
 
 const NO_DATA = "No data";
-
-/**
- * The requirement metrics the agronomic section renders, beside the target.
- *
- * Shared metric codes the domain documents, like {@link POINT_CODES}: a recipe
- * that states them is rendered whatever it grows, and no crop, recipe or stage
- * name is compiled into this page.
- */
-const REQUIREMENT_METRICS = {
-  humidity: "air_humidity",
-  photoperiod: "photoperiod",
-};
-
-/** The metric a runtime target materializes. Temperature is the only one. */
-const TARGET_METRIC = "air_temperature";
-
-/** Requirement shapes, and which values each one carries. */
-const REQUIREMENT_KINDS = {
-  range: "range",
-  durationPerDay: "duration_per_day",
-};
-
-/** The lifecycle state the agronomic section renders. It renders no other. */
-const ACTIVE_STATUS = "active";
-
-/** How a cycle's lifecycle state is written for a reader. */
-const CYCLE_STATUS_LABELS = { active: "Active" };
-
-/**
- * Where the executable temperature band came from.
- *
- * The band is read from the cycle's active `RuntimeTarget` — the immutable
- * snapshot the control loop is deciding on — so the provenance a reader is owed
- * is the grow cycle, not the loop's own legacy thresholds and not the recipe
- * requirement the snapshot was copied from.
- */
-const TARGET_SOURCE_LABEL = "Grow Cycle";
-
-/** What the agronomic section says while it is not showing a cycle. */
-const AGRONOMY_MESSAGES = {
-  loading: "Reading the grow cycle…",
-  none: "No active grow cycle",
-  error: "The grow cycle could not be read.",
-};
-
-/** Heading of the section while no cycle is named in it. */
-const AGRONOMY_LABEL = "Grow cycle";
-
-/**
- * Reported when the read cycle and its recipe version do not describe one graph.
- *
- * Deliberately the same sentence whichever check failed: which field disagreed
- * is a diagnostic for the API's logs, and a reader is owed the safe fact that
- * the section could not be trusted, not the internal detail of why.
- */
-const AGRONOMY_INCONSISTENT = "The grow cycle could not be resolved.";
-
-/**
- * Active cycles read per facility.
- *
- * One page is enough to find the displayed zone's cycle: a zone runs at most one
- * active cycle, so this window covers a facility with fifty climate zones, and
- * the domain has one.
- */
-const ACTIVE_CYCLE_LIMIT = 50;
 
 /**
  * What a command's delivery state adds to its activity entry.
@@ -145,9 +78,6 @@ const CHART = { width: 320, height: 120, padding: 8 };
 const dashboard = document.querySelector(".dashboard");
 const errorRegion = document.querySelector('[data-region="error"]');
 const emptyRegion = document.querySelector('[data-region="empty"]');
-const agronomyRegion = document.querySelector('[data-region="agronomy"]');
-const cycleDetail = document.querySelector('[data-region="cycle-detail"]');
-const cycleFootnote = document.querySelector('[data-region="cycle-footnote"]');
 
 /**
  * The facility the last successful cycle resolved, while there is one.
@@ -170,16 +100,6 @@ let queued = 0;
 
 /** Handle of the pending scheduled refresh, when one is pending. */
 let pollTimer = null;
-
-/**
- * The cycle the agronomic section currently names, while it names one.
- *
- * It is what keeps a refresh from blanking a section that is already correct:
- * the loading state is entered only when there is nothing to keep, and a
- * resolved cycle replaces the previous one in a single render rather than
- * leaving one cycle's name above another cycle's requirements.
- */
-let renderedCycleId = null;
 
 /** A read that failed for a reason the reader can be told about safely. */
 class DashboardError extends Error {}
@@ -514,238 +434,6 @@ function render(snapshot) {
 }
 
 /**
- * Refuse a graph whose parts do not describe one cycle.
- *
- * @param {boolean} consistent What had to hold.
- * @throws {DashboardError} When it did not.
- */
-function insist(consistent) {
-  if (!consistent) {
-    throw new DashboardError(AGRONOMY_INCONSISTENT);
-  }
-}
-
-/**
- * Write one API number the shortest way it stays exact.
- *
- * The public contract carries these as JSON numbers, so `22` arrives as `22` and
- * would be written back as `22.0` by any fixed-precision formatter. Locale
- * formatting is avoided as well: a decimal separator that changes with the
- * reader's browser is not the value the API sent.
- *
- * @param {number} value The value as the API returned it.
- * @returns {string} The value, without invented precision.
- * @throws {DashboardError} If it is not a finite number.
- */
-function formatDecimal(value) {
-  const number = Number(value);
-  insist(Number.isFinite(number));
-  return String(number);
-}
-
-/**
- * Write a band as `lower–upper unit`.
- *
- * @param {number} lower Lower bound.
- * @param {number} upper Upper bound.
- * @param {string} unit The unit the API supplied, which is never translated.
- * @returns {string} The rendered band.
- */
-function formatBand(lower, upper, unit) {
-  return `${formatDecimal(lower)}–${formatDecimal(upper)} ${unit}`;
-}
-
-/**
- * Find one requirement of a stage by the metric it constrains.
- *
- * @param {Array<object>} requirements The stage's requirements.
- * @param {string} metric The metric code to find.
- * @param {string} kind The shape that metric has to have been stated in.
- * @returns {object} The matching requirement.
- * @throws {DashboardError} If it is absent or stated in another shape.
- */
-function requirementOf(requirements, metric, kind) {
-  const found = requirements.find((requirement) => requirement.metric_type === metric);
-  insist(found !== undefined && found.requirement_kind === kind);
-  return found;
-}
-
-/**
- * Turn one cycle, its version and its recipe identity into the rendered view.
- *
- * Every check here answers the same question: do these three responses describe
- * one graph? They are read one after another and nothing in HTTP makes them a
- * snapshot, so a cycle whose stage belongs to another version, or whose target
- * was materialized from a requirement this stage does not carry, is reported as
- * inconsistent instead of being combined into a plausible-looking panel.
- *
- * @param {object} cycle The active cycle of the displayed zone.
- * @param {object} version The recipe version it names.
- * @param {object} recipe The recipe identity that version belongs to.
- * @returns {object} The values the section renders.
- * @throws {DashboardError} If the three responses disagree.
- */
-function agronomicView(cycle, version, recipe) {
-  insist(cycle.status === ACTIVE_STATUS);
-  insist(version.id === cycle.recipe_version_id);
-  insist(recipe.id === version.recipe_id);
-
-  // The stage is taken from the cycle, which is what it is actually running,
-  // and is only accepted once the version confirms the stage is one of its own.
-  const stage = cycle.current_stage;
-  insist(stage.recipe_version_id === cycle.recipe_version_id);
-  insist(version.stage.id === stage.id);
-
-  // An active cycle without an open target breaks a Unit 2 invariant. The recipe
-  // requirement it was materialized from is *not* a substitute: presenting it
-  // would claim an executable target that no control loop is running on.
-  const target = cycle.active_runtime_target;
-  insist(target !== null && target !== undefined);
-  insist(target.effective_to === null);
-  insist(target.metric_type === TARGET_METRIC);
-
-  const requirements = version.stage.requirements;
-  insist(
-    requirements.some((requirement) => requirement.id === target.target_requirement_id),
-  );
-  const humidity = requirementOf(
-    requirements,
-    REQUIREMENT_METRICS.humidity,
-    REQUIREMENT_KINDS.range,
-  );
-  const photoperiod = requirementOf(
-    requirements,
-    REQUIREMENT_METRICS.photoperiod,
-    REQUIREMENT_KINDS.durationPerDay,
-  );
-
-  return {
-    id: cycle.id,
-    name: cycle.name,
-    status: CYCLE_STATUS_LABELS[cycle.status] ?? cycle.status,
-    recipe: `${recipe.name} v${formatDecimal(version.version_number)}`,
-    stage: stage.name,
-    temperature: formatBand(target.lower_value, target.upper_value, target.unit),
-    source: TARGET_SOURCE_LABEL,
-    humidity: formatBand(humidity.min_value, humidity.max_value, humidity.unit),
-    photoperiod: `${formatDecimal(photoperiod.target_value)} ${photoperiod.unit}`,
-  };
-}
-
-/**
- * Resolve the active cycle of the climate zone this page is showing.
- *
- * The facility's active cycles are matched on `climate_zone_id` and on nothing
- * else. List position, creation order and every code in the response are
- * deliberately unused: a facility may hold a second zone, and the cycle running
- * in it is not this zone's cycle.
- *
- * @param {object} context The facility and its current configuration.
- * @returns {Promise<object|null>} The rendered view, or `null` when this zone
- *     runs no cycle — which is a normal state and not a failure.
- * @throws {DashboardError} If a read fails or the graph is inconsistent.
- */
-async function readAgronomy(context) {
-  const zone = context.controlZone;
-  if (zone === null) {
-    return null;
-  }
-  const page = await read(
-    `/grow-cycles?facility_id=${context.facility.id}` +
-      `&status=${ACTIVE_STATUS}&limit=${ACTIVE_CYCLE_LIMIT}`,
-  );
-  // Both halves matter. The zone is what makes the cycle *this* page's, and the
-  // status is checked again here rather than trusted to the query string: a
-  // planned, completed or aborted cycle has no place in a section that says
-  // what is running now, whatever a filter did or did not do.
-  const matches = page.items.filter(
-    (cycle) => cycle.climate_zone_id === zone.id && cycle.status === ACTIVE_STATUS,
-  );
-  if (matches.length === 0) {
-    return null;
-  }
-  // Two active cycles in one climate zone is a state the domain forbids. There
-  // is no rule that picks between them, so the section says it could not be
-  // resolved rather than inventing one.
-  insist(matches.length === 1);
-
-  const cycle = matches[0];
-  const version = await read(`/recipe-versions/${cycle.recipe_version_id}`);
-  // The version names the recipe by identifier; the name a reader reads lives on
-  // the recipe itself. The version's own numbers are never taken from here.
-  const recipe = await read(`/growing-recipes/${version.recipe_id}`);
-  return agronomicView(cycle, version, recipe);
-}
-
-/**
- * Put the agronomic section into a state that names no cycle.
- *
- * Every value is cleared rather than left behind: a section that kept the last
- * cycle's requirements under a loading or failure message would be presenting
- * them as current, which is exactly what they are not.
- *
- * @param {string} state The state to enter: `loading`, `none` or `error`.
- */
-function showAgronomyMessage(state) {
-  agronomyRegion.dataset.state = state;
-  field("cycle-name").textContent = AGRONOMY_LABEL;
-  field("cycle-status").textContent = "";
-  const message = field("cycle-message");
-  message.textContent = AGRONOMY_MESSAGES[state];
-  message.hidden = false;
-  for (const name of [
-    "cycle-recipe",
-    "cycle-stage",
-    "cycle-temperature",
-    "cycle-temperature-source",
-    "cycle-humidity",
-    "cycle-photoperiod",
-  ]) {
-    field(name).textContent = "";
-  }
-  cycleDetail.hidden = true;
-  cycleFootnote.hidden = true;
-  renderedCycleId = null;
-}
-
-/**
- * Write one resolved cycle into the agronomic section.
- *
- * @param {object} view The values {@link agronomicView} resolved.
- */
-function renderAgronomy(view) {
-  agronomyRegion.dataset.state = ACTIVE_STATUS;
-  field("cycle-name").textContent = view.name;
-  field("cycle-status").textContent = view.status;
-  const message = field("cycle-message");
-  message.textContent = "";
-  message.hidden = true;
-  field("cycle-recipe").textContent = view.recipe;
-  field("cycle-stage").textContent = view.stage;
-  field("cycle-temperature").textContent = view.temperature;
-  field("cycle-temperature-source").textContent = view.source;
-  field("cycle-humidity").textContent = view.humidity;
-  field("cycle-photoperiod").textContent = view.photoperiod;
-  cycleDetail.hidden = false;
-  cycleFootnote.hidden = false;
-  renderedCycleId = view.id;
-}
-
-/**
- * Announce that the section is being read, when there is nothing to keep.
- *
- * A section already showing a cycle keeps showing it while the next read runs:
- * the reads are serialised, so the result that arrives is this refresh's, and
- * blanking a correct panel every five seconds would be noise rather than
- * honesty.
- */
-function startAgronomy() {
-  if (renderedCycleId === null) {
-    showAgronomyMessage("loading");
-  }
-}
-
-/**
  * Show that the cloud holds nothing to render yet.
  *
  * An empty cloud is a normal state and not a failure: the page says so plainly
@@ -839,37 +527,17 @@ async function readAndRender() {
     const found = await discoverFacility();
     if (found === null) {
       showEmpty();
-      // An empty cloud holds no cycle either, and that is the plain answer to
-      // the question the section asks — not a failure to answer it.
-      showAgronomyMessage("none");
       clearError();
       return;
     }
     const context = await readConfiguration(found);
     render(await readSnapshot(context));
     clearEmpty();
-
-    // The agronomic section is read after the readings above it and fails on its
-    // own. What the zone measured was already read successfully, and a grow
-    // cycle nobody could resolve is no reason to take it off the screen.
-    startAgronomy();
-    try {
-      const view = await readAgronomy(context);
-      if (view === null) {
-        showAgronomyMessage("none");
-      } else {
-        renderAgronomy(view);
-      }
-      clearError();
-    } catch (error) {
-      showAgronomyMessage("error");
-      showError(error);
-    }
+    clearError();
   } catch (error) {
     // Discovery is retried from scratch: what could not be read now may be
     // readable by the time the next cycle runs.
     facility = null;
-    showAgronomyMessage("error");
     showError(error);
   } finally {
     dashboard.dataset.phase = "ready";

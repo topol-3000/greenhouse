@@ -49,28 +49,38 @@ EXPECTED_TABLES: set[str] = {
     "gateways",
     "gateway_points",
     "edge_telemetry_messages",
-    "crops",
-    "growing_recipes",
-    "recipe_versions",
-    "recipe_stages",
-    "target_requirements",
-    "grow_cycles",
-    "grow_cycle_zone_assignments",
-    "grow_stage_instances",
-    "runtime_targets",
 }
 """Every table the schema at ``head`` carries; ``downgrade`` must remove them all.
 
-``simulation_runs`` is deliberately absent. It is created by ``20260729_0008``
-and dropped again by ``20260731_0015``, so it exists partway along the path and
-not at either end of it.
+``simulation_runs`` is deliberately absent, and so is every Milestone 5 table.
+Each of them exists partway along the path and at neither end of it:
+``simulation_runs`` between ``20260729_0008`` and ``20260731_0015``, and the
+agronomy and grow-cycle tables between ``20260801_0016`` and ``20260803_0019``.
 """
+
+M5_TABLES: frozenset[str] = frozenset(
+    {
+        "crops",
+        "growing_recipes",
+        "recipe_versions",
+        "recipe_stages",
+        "target_requirements",
+        "grow_cycles",
+        "grow_cycle_zone_assignments",
+        "grow_stage_instances",
+        "runtime_targets",
+    }
+)
+"""The nine tables ``20260803_0019`` compensates ``0016`` and ``0017`` with."""
 
 REVISION_BEFORE_SIMULATION_REMOVAL: str = "20260731_0014"
 """The last revision whose schema still carries the simulation domain."""
 
-UNIT_2_REVISION: str = "20260801_0017"
-"""The schema immediately before command RuntimeTarget provenance."""
+REVISION_BEFORE_M5: str = "20260731_0015"
+"""The last revision before the agronomy catalog: the pre-M5 schema."""
+
+M5_HEAD_REVISION: str = "20260801_0018"
+"""The last Milestone 5 revision, and what a deployed M5 database is at."""
 
 
 def run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -157,6 +167,24 @@ async def column_names(database_url: str, table: str) -> set[str]:
                 {"table": table},
             )
             return set(names)
+    finally:
+        await engine.dispose()
+
+
+async def row_count(database_url: str, table: str) -> int:
+    """Count the rows of one table.
+
+    Args:
+        database_url: The database to inspect.
+        table: The table to count. Never taken from request input.
+
+    Returns:
+        The number of rows currently in it.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            return int(await connection.scalar(text(f"SELECT count(*) FROM {table}")) or 0)
     finally:
         await engine.dispose()
 
@@ -378,6 +406,141 @@ async def seed_pre_removal_rows(database_url: str) -> None:
         await engine.dispose()
 
 
+CROP_ID: UUID = UUID("d1111111-1111-4111-8111-111111111111")
+RECIPE_ID: UUID = UUID("d2222222-2222-4222-8222-222222222222")
+VERSION_ID: UUID = UUID("d3333333-3333-4333-8333-333333333333")
+STAGE_ID: UUID = UUID("d4444444-4444-4444-8444-444444444444")
+REQUIREMENT_ID: UUID = UUID("d5555555-5555-4555-8555-555555555555")
+CYCLE_ID: UUID = UUID("d6666666-6666-4666-8666-666666666666")
+ZONE_ASSIGNMENT_ID: UUID = UUID("d7777777-7777-4777-8777-777777777777")
+STAGE_INSTANCE_ID: UUID = UUID("d8888888-8888-4888-8888-888888888888")
+TARGET_ID: UUID = UUID("d9999999-9999-4999-8999-999999999999")
+
+
+async def seed_m5_head_rows(database_url: str) -> None:
+    """Populate a database at ``20260801_0018`` the way a running M5 deployment is.
+
+    The rows are written by hand rather than through the services, because the
+    services describe the rolled-back schema and what this fixture has to produce
+    is a database as Milestone 5 left it: a full recipe graph, a running cycle
+    with its stage instance and its open runtime target, and — the part that
+    matters most — a command whose ``runtime_target_id`` points at that target.
+    A compensating migration that dropped the target before the reference would
+    fail here rather than in a deployment.
+
+    Args:
+        database_url: A database migrated to :data:`M5_HEAD_REVISION` and already
+            carrying the growbox :func:`seed_pre_removal_rows` writes.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO crops (id, code, display_name, scientific_name, status,"
+                    " created_at)"
+                    " VALUES (:id, 'basil', 'Basil', 'Ocimum basilicum', 'active', :now)"
+                ),
+                {"id": CROP_ID, "now": OBSERVED_AT},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO growing_recipes (id, crop_id, code, name, status, created_at)"
+                    " VALUES (:id, :crop_id, 'basil-default', 'Default basil recipe', 'active',"
+                    " :now)"
+                ),
+                {"id": RECIPE_ID, "crop_id": CROP_ID, "now": OBSERVED_AT},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO recipe_versions (id, recipe_id, version_number, status,"
+                    " published_at, created_at)"
+                    " VALUES (:id, :recipe_id, 1, 'published', :now, :now)"
+                ),
+                {"id": VERSION_ID, "recipe_id": RECIPE_ID, "now": OBSERVED_AT},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO recipe_stages (id, recipe_version_id, code, name,"
+                    " sequence_number)"
+                    " VALUES (:id, :version_id, 'vegetative', 'Vegetative', 1)"
+                ),
+                {"id": STAGE_ID, "version_id": VERSION_ID},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO target_requirements (id, recipe_stage_id, metric_type,"
+                    " requirement_kind, unit, min_value, max_value, target_value)"
+                    " VALUES (:id, :stage_id, 'air_temperature', 'range', '°C', 22, 26, NULL)"
+                ),
+                {"id": REQUIREMENT_ID, "stage_id": STAGE_ID},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO grow_cycles (id, code, name, facility_id, recipe_version_id,"
+                    " current_stage_id, status, planned_start_at, started_at, ended_at,"
+                    " created_at)"
+                    " VALUES (:id, 'basil-demo-cycle', 'Basil Grow Cycle', :facility_id,"
+                    " :version_id, :stage_id, 'active', NULL, :now, NULL, :now)"
+                ),
+                {
+                    "id": CYCLE_ID,
+                    "facility_id": FACILITY_ID,
+                    "version_id": VERSION_ID,
+                    "stage_id": STAGE_ID,
+                    "now": OBSERVED_AT,
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO grow_cycle_zone_assignments (id, grow_cycle_id, control_zone_id,"
+                    " role, created_at)"
+                    " VALUES (:id, :cycle_id, :zone_id, 'climate', :now)"
+                ),
+                {
+                    "id": ZONE_ASSIGNMENT_ID,
+                    "cycle_id": CYCLE_ID,
+                    "zone_id": ZONE_ID,
+                    "now": OBSERVED_AT,
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO grow_stage_instances (id, grow_cycle_id, recipe_stage_id,"
+                    " started_at, ended_at)"
+                    " VALUES (:id, :cycle_id, :stage_id, :now, NULL)"
+                ),
+                {
+                    "id": STAGE_INSTANCE_ID,
+                    "cycle_id": CYCLE_ID,
+                    "stage_id": STAGE_ID,
+                    "now": OBSERVED_AT,
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO runtime_targets (id, control_loop_id, grow_cycle_id,"
+                    " target_requirement_id, metric_type, lower_value, upper_value, unit,"
+                    " effective_from, effective_to, created_at)"
+                    " VALUES (:id, :loop_id, :cycle_id, :requirement_id, 'air_temperature',"
+                    " 22, 26, '°C', :now, NULL, :now)"
+                ),
+                {
+                    "id": TARGET_ID,
+                    "loop_id": LOOP_ID,
+                    "cycle_id": CYCLE_ID,
+                    "requirement_id": REQUIREMENT_ID,
+                    "now": OBSERVED_AT,
+                },
+            )
+            await connection.execute(
+                text("UPDATE commands SET runtime_target_id = :target_id WHERE id = :command_id"),
+                {"target_id": TARGET_ID, "command_id": COMMAND_ID},
+            )
+    finally:
+        await engine.dispose()
+
+
 async def recorded_data(database_url: str) -> dict[str, Any]:
     """Read back the measured values, the projection and the command history.
 
@@ -478,25 +641,99 @@ async def test_every_migration_downgrades_back_to_an_empty_database(
     assert EXPECTED_TABLES <= await table_names(scratch_database)
 
 
-async def test_command_provenance_round_trips_to_the_unit_2_schema(
+async def test_the_schema_at_head_carries_no_agronomy_or_grow_cycle_object(
     scratch_database: str,
 ) -> None:
-    """Upgrade, downgrade to Unit 2, and re-upgrade preserve the focused delta."""
-    assert run_alembic(scratch_database, "upgrade", UNIT_2_REVISION).returncode == 0
-    assert "runtime_target_id" not in await column_names(scratch_database, "commands")
+    """Milestone 5 left the cloud, and so did everything it persisted.
+
+    Asserted against PostgreSQL rather than against the declarative metadata,
+    because a dropped model with a surviving table is exactly the failure a
+    removal migration can have. The constraint and index names are matched
+    loosely on purpose: one nobody remembered would still contain the word.
+    """
+    assert run_alembic(scratch_database, "upgrade", "head").returncode == 0
+    tables = await table_names(scratch_database)
+    command_columns = await column_names(scratch_database, "commands")
+    constraints, indexes = await relation_names(scratch_database)
+    removed = ("crop", "recipe", "grow_cycle", "grow_stage", "runtime_target")
+
+    assert tables & M5_TABLES == set(), tables
+    assert "runtime_target_id" not in command_columns
+    assert [name for name in constraints if any(word in name for word in removed)] == []
+    assert [name for name in indexes if any(word in name for word in removed)] == []
+
+
+async def test_a_pre_milestone_5_database_upgrades_straight_to_the_rolled_back_head(
+    scratch_database: str,
+) -> None:
+    """A deployment that never applied M5 passes through it and arrives with nothing extra.
+
+    ``20260801_0016`` and ``20260801_0017`` are published history and still run,
+    so this path creates the nine tables and drops them again a revision later.
+    What matters is where it ends: the same schema a clean database reaches.
+    """
+    before = run_alembic(scratch_database, "upgrade", REVISION_BEFORE_M5)
+    assert before.returncode == 0, before.stderr
+    assert await table_names(scratch_database) & M5_TABLES == set()
 
     upgrade = run_alembic(scratch_database, "upgrade", "head")
-    after_upgrade = await column_names(scratch_database, "commands")
-    downgrade = run_alembic(scratch_database, "downgrade", UNIT_2_REVISION)
-    after_downgrade = await column_names(scratch_database, "commands")
+    check = run_alembic(scratch_database, "check")
+
+    assert upgrade.returncode == 0, upgrade.stderr
+    assert check.returncode == 0, check.stderr
+    assert EXPECTED_TABLES <= await table_names(scratch_database)
+    assert await table_names(scratch_database) & M5_TABLES == set()
+    assert "runtime_target_id" not in await column_names(scratch_database, "commands")
+
+
+async def test_a_populated_milestone_5_database_migrates_to_the_rolled_back_head(
+    scratch_database: str,
+) -> None:
+    """A representative M5 deployment loses only M5, and round-trips afterwards.
+
+    The seeded database is the awkward one: a command that names the runtime
+    target of a running cycle, so the reference has to be dropped before the
+    table it points at. The measurements, the current state and the command
+    itself are the preserved half and are compared before and after.
+
+    The round trip is the second half of the assertion — head, back to the last
+    M5 revision, then head again. A downgrade that rebuilt the wrong shape fails
+    on the second upgrade rather than quietly.
+    """
+    before = run_alembic(scratch_database, "upgrade", REVISION_BEFORE_SIMULATION_REMOVAL)
+    assert before.returncode == 0, before.stderr
+    await seed_pre_removal_rows(scratch_database)
+    at_m5 = run_alembic(scratch_database, "upgrade", M5_HEAD_REVISION)
+    assert at_m5.returncode == 0, at_m5.stderr
+    await seed_m5_head_rows(scratch_database)
+    assert await command_runtime_target(scratch_database, COMMAND_ID) == TARGET_ID
+
+    upgrade = run_alembic(scratch_database, "upgrade", "head")
+    preserved = await recorded_data(scratch_database)
+    tables_at_head = await table_names(scratch_database)
+    columns_at_head = await column_names(scratch_database, "commands")
+    downgrade = run_alembic(scratch_database, "downgrade", M5_HEAD_REVISION)
+    tables_after_downgrade = await table_names(scratch_database)
+    columns_after_downgrade = await column_names(scratch_database, "commands")
+    provenance_after_downgrade = await command_runtime_target(scratch_database, COMMAND_ID)
+    crops_after_downgrade = await row_count(scratch_database, "crops")
+    targets_after_downgrade = await row_count(scratch_database, "runtime_targets")
     upgrade_again = run_alembic(scratch_database, "upgrade", "head")
 
     assert upgrade.returncode == 0, upgrade.stderr
-    assert "runtime_target_id" in after_upgrade
+    assert preserved == EXPECTED_RECORDED_DATA
+    assert tables_at_head & M5_TABLES == set()
+    assert "runtime_target_id" not in columns_at_head
+    # The downgrade rebuilds the schema and recovers no row: the data deletion
+    # the upgrade performed is irreversible, and the migration says so.
     assert downgrade.returncode == 0, downgrade.stderr
-    assert "runtime_target_id" not in after_downgrade
+    assert M5_TABLES <= tables_after_downgrade
+    assert "runtime_target_id" in columns_after_downgrade
+    assert provenance_after_downgrade is None
+    assert (crops_after_downgrade, targets_after_downgrade) == (0, 0)
     assert upgrade_again.returncode == 0, upgrade_again.stderr
-    assert "runtime_target_id" in await column_names(scratch_database, "commands")
+    assert await recorded_data(scratch_database) == EXPECTED_RECORDED_DATA
+    assert run_alembic(scratch_database, "check").returncode == 0
 
 
 async def test_the_schema_at_head_carries_no_simulation_object(
@@ -546,12 +783,10 @@ async def test_removing_the_simulation_domain_preserves_recorded_data(
     upgrade_again = run_alembic(scratch_database, "upgrade", "head")
 
     assert upgrade.returncode == 0, upgrade.stderr
-    assert await command_runtime_target(scratch_database, COMMAND_ID) is None
     assert downgrade.returncode == 0, downgrade.stderr
     assert upgrade_again.returncode == 0, upgrade_again.stderr
     assert preserved == EXPECTED_RECORDED_DATA
     assert after_downgrade == EXPECTED_RECORDED_DATA
     assert await recorded_data(scratch_database) == EXPECTED_RECORDED_DATA
-    assert await command_runtime_target(scratch_database, COMMAND_ID) is None
     assert "simulation_run_id" not in await column_names(scratch_database, "telemetry_samples")
     assert run_alembic(scratch_database, "check").returncode == 0

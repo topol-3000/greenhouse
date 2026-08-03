@@ -1,9 +1,9 @@
 # Dashboard JavaScript tests
 
 The dashboard is plain HTML, CSS and JavaScript served by the API, and these are
-the tests that execute it. They cover what no Python test can reach: which grow
-cycle the page selects, what it writes into the markup, and how it behaves while
-a read is in flight, has failed or has returned something inconsistent.
+the tests that execute it. They cover what no Python test can reach: what the
+page writes into the markup, and how it behaves while a read is in flight or has
+failed.
 
 ```bash
 node --test tests/javascript/*.test.mjs   # directly
@@ -21,8 +21,7 @@ before opening a pull request that touches the page.
 | --- | --- |
 | `harness.mjs` | The stub document, the routing `fetch` and the captured poll. |
 | `fixtures.mjs` | The public API bodies the tests answer with. |
-| `dashboard_agronomy.test.mjs` | Cycle selection, the agronomic view and its states. |
-| `dashboard_readings.test.mjs` | The readings, chart and activity list, unchanged by Unit 4. |
+| `dashboard_readings.test.mjs` | The readings, chart and activity list, and the absence of the rolled-back grow cycle section. |
 
 ## Rules
 
@@ -39,6 +38,10 @@ before opening a pull request that touches the page.
 4. **Fixtures are the API's shapes.** They mirror what
    `tests/integration/factories.py` provisions over HTTP. When a response schema
    changes, the integration tests fail first; these fixtures follow.
-5. **Values live in the tests, never in the page.** Crop, recipe, stage and
-   target values are written by a fixture and read back out of the document, and
-   one test renames all of them to prove the page hard-codes none.
+5. **Values live in the tests, never in the page.** Every value is written by a
+   fixture and read back out of the document, so a name or a number compiled
+   into `dashboard.js` would show up as a value no fixture supplied.
+6. **A removed section is asserted where it would come back.** `render` fails on
+   any URL the routing table does not answer, so a section rebuilt in the page
+   fails as an unrouted read before anyone has to think of the right string to
+   ban.

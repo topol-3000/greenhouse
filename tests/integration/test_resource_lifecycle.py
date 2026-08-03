@@ -13,16 +13,11 @@ import httpx
 from tests.integration.factories import (
     CONTROL_LOOPS_URL,
     CONTROL_ZONES_URL,
-    CROPS_URL,
     FACILITIES_URL,
-    GROWING_RECIPES_URL,
     POINTS_URL,
-    RECIPE_VERSIONS_URL,
     SITES_URL,
-    create_crop,
     create_growbox,
     create_point,
-    create_recipe,
 )
 
 
@@ -30,17 +25,12 @@ async def test_no_domain_entity_can_be_deleted(http_client: httpx.AsyncClient) -
     """``DELETE`` exists only for a zone-point assignment, which is a link, not an entity."""
     site, facility, control_zone = await create_growbox(http_client)
     point = await create_point(http_client, site["id"], facility_id=facility["id"])
-    crop = await create_crop(http_client)
-    recipe = await create_recipe(http_client, crop["id"])
     entity_urls: dict[str, str] = {
         "site": f"{SITES_URL}/{site['id']}",
         "facility": f"{FACILITIES_URL}/{facility['id']}",
         "control zone": f"{CONTROL_ZONES_URL}/{control_zone['id']}",
         "point": f"{POINTS_URL}/{point['id']}",
         "control loop": f"{CONTROL_LOOPS_URL}/{uuid4()}",
-        "crop": f"{CROPS_URL}/{crop['id']}",
-        "growing recipe": f"{GROWING_RECIPES_URL}/{recipe['id']}",
-        "recipe version": f"{RECIPE_VERSIONS_URL}/{recipe['version']['id']}",
     }
 
     for entity, url in entity_urls.items():

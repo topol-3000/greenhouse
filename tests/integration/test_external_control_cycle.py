@@ -26,12 +26,9 @@ from ai_greenhouse.gateways.service import GatewayConfigurationService
 from tests.integration.factories import (
     LOWER_THRESHOLD,
     UPPER_THRESHOLD,
-    activate_grow_cycle,
     count_rows,
     create_climate_growbox,
     create_control_loop,
-    create_cycle_environment,
-    create_grow_cycle,
 )
 
 API_URL: str = "/api/v1"
@@ -250,79 +247,9 @@ async def test_an_externally_provisioned_growbox_closes_the_control_cycle(
     # field belongs to an in-process actuator. The acknowledgement is what dates
     # it, which is what the dashboard's activity list orders by.
     assert [command["state"] for command in activity_commands] == ["applied", "applied"]
-    assert all(command["runtime_target_id"] is None for command in activity_commands)
+    assert all("runtime_target_id" not in command for command in activity_commands)
     assert all(command["executed_at"] is None for command in activity_commands)
     assert all(command["acknowledged_at"] is not None for command in activity_commands)
     assert history[0]["value"] == temperature_at_off
     # Three temperatures and two fan reports of two points each.
     assert await count_rows(connection, "telemetry_samples") == 7
-
-
-async def test_an_active_recipe_target_drives_the_existing_edge_command_cycle(
-    http_client: httpx.AsyncClient,
-    connection: AsyncConnection,
-    session: AsyncSession,
-) -> None:
-    """The public Edge path executes ``27 → 24 → 21`` from a 22–26 target."""
-    environment = await create_cycle_environment(
-        http_client,
-        lower_threshold=20,
-        upper_threshold=30,
-    )
-    cycle = await create_grow_cycle(http_client, environment)
-    activated = await activate_grow_cycle(http_client, cycle["id"])
-    target_id = activated["active_runtime_target"]["id"]
-    points = environment.growbox.points
-
-    assert await count_rows(connection, "commands") == 0
-    assert await count_rows(connection, "telemetry_samples") == 0
-
-    gateway = await GatewayConfigurationService(session).create(
-        site_id=UUID(environment.growbox.site["id"]),
-        point_ids=[UUID(point["id"]) for point in points.values()],
-    )
-    await session.commit()
-
-    await _submit(
-        http_client,
-        gateway.id,
-        [_message(points["air_temperature"], 27.0, NOW, "sensor")],
-    )
-    pending_on = await _get(http_client, f"{API_URL}/edge/gateways/{gateway.id}/commands")
-    assert len(pending_on["commands"]) == 1
-    assert set(pending_on["commands"][0]) == {
-        "command_id",
-        "point_id",
-        "reported_point_id",
-        "data_type",
-        "desired_value",
-        "issued_at",
-        "state",
-    }
-    assert pending_on["commands"][0]["desired_value"] is True
-    await _apply_pending_command(http_client, gateway.id, points, at=NOW + timedelta(minutes=1))
-
-    await _submit(
-        http_client,
-        gateway.id,
-        [_message(points["air_temperature"], 24.0, NOW + timedelta(minutes=2), "sensor")],
-    )
-    assert (await _get(http_client, f"{API_URL}/edge/gateways/{gateway.id}/commands"))[
-        "commands"
-    ] == []
-    assert len(await _commands(http_client, environment.control_loop["id"])) == 1
-
-    await _submit(
-        http_client,
-        gateway.id,
-        [_message(points["air_temperature"], 21.0, NOW + timedelta(minutes=3), "sensor")],
-    )
-    pending_off = await _get(http_client, f"{API_URL}/edge/gateways/{gateway.id}/commands")
-    assert pending_off["commands"][0]["desired_value"] is False
-    assert "runtime_target_id" not in pending_off["commands"][0]
-    await _apply_pending_command(http_client, gateway.id, points, at=NOW + timedelta(minutes=4))
-
-    commands = await _commands(http_client, environment.control_loop["id"])
-    assert [command["desired_value"] for command in commands] == [False, True]
-    assert {command["runtime_target_id"] for command in commands} == {target_id}
-    assert await count_rows(connection, "commands") == 2

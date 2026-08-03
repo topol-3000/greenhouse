@@ -21,14 +21,15 @@ async def test_an_unknown_command_is_reported_missing(http_client: httpx.AsyncCl
     assert response.json()["error"]["code"] == "command_not_found"
 
 
-async def test_command_provenance_cannot_be_mutated(http_client: httpx.AsyncClient) -> None:
-    """Runtime-target provenance is automation-owned and commands remain read-only."""
-    response = await http_client.patch(
-        f"{COMMANDS_URL}/{uuid4()}",
-        json={"runtime_target_id": str(uuid4())},
-    )
+async def test_a_command_can_neither_be_created_nor_changed(
+    http_client: httpx.AsyncClient,
+) -> None:
+    """A command is a consequence of accepted telemetry, so the resource is read-only."""
+    created = await http_client.post(COMMANDS_URL, json={})
+    patched = await http_client.patch(f"{COMMANDS_URL}/{uuid4()}", json={"desired_value": True})
 
-    assert response.status_code == 405, response.text
+    assert created.status_code == 405, created.text
+    assert patched.status_code == 405, patched.text
 
 
 @pytest.mark.parametrize(

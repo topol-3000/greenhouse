@@ -1,49 +1,42 @@
 # ADR 0001: Recipe to RuntimeTarget control boundary
 
-- Status: Accepted
+- Status: Superseded by
+  [ADR 0002](0002-first-harvest-automation-boundary.md)
 - Date: 2026-08-01
+- Superseded: 2026-08-03
 
-## Context
+## What this record is now
 
-A Growing Recipe defines the environmental conditions a plant requires.
-`hysteresis-v1` defines how the system reacts to temperature. Before Milestone
-5, immutable thresholds on `ControlLoop` were the only executable source.
-Milestone 5 Unit 2 introduced `RuntimeTarget` as an immutable snapshot of the
-active GrowCycle's temperature requirement, but automation did not consume it.
+This ADR decided that an active `RuntimeTarget` snapshotted from a Growing
+Recipe took precedence over a `ControlLoop`'s own thresholds, that a
+target-derived `Command` recorded `runtime_target_id`, and that the loop's
+thresholds stayed as a legacy fallback.
 
-The control decision must use one coherent pair of bounds and retain enough
-provenance to show which persisted configuration produced a command. Existing
-installations without active GrowCycles must keep working, and the Edge command
-contract must remain independent of cloud agronomy.
+**None of that is implemented.** Milestone 5 was rolled back out of the active
+product on 2026-08-03: `Crop`, `GrowingRecipe`, `RecipeVersion`, `RecipeStage`,
+`TargetRequirement`, `GrowCycle`, `GrowCycleZoneAssignment`,
+`GrowStageInstance` and `RuntimeTarget` no longer exist in the runtime, the
+latest schema, the public API or the dashboard, and `commands` no longer carries
+a `runtime_target_id` column. `hysteresis-v1` decides on
+`ControlLoop.lower_threshold` and `ControlLoop.upper_threshold` and on nothing
+else — which is the boundary this ADR replaced and the boundary that is back.
 
-## Decision
+The decision this record described is kept here rather than deleted, because
+commit `e4a6a0d` and pull request #38 implemented it and the schema history in
+`migrations/versions/` still applies and un-applies it. What it does not
+describe is the current system. Read
+[ADR 0002](0002-first-harvest-automation-boundary.md) for that.
 
-- An active `RuntimeTarget` for the evaluated `ControlLoop`, identified by
-  `control_loop_id` and `effective_to IS NULL`, takes precedence.
-- When no active target exists, the loop's immutable legacy thresholds remain
-  the compatibility fallback.
-- Target selection uses transaction-time state. A telemetry sample's
-  `observed_at` does not select historical targets.
-- One resolver returns the effective lower bound, upper bound, source type and
-  nullable RuntimeTarget ID together. Evaluation does not query bounds and
-  provenance separately.
-- The selected active target is held through command persistence. Invalid
-  active target data fails automation safely and is never treated as absence.
-- A target-derived `Command` persists `runtime_target_id`; a legacy-derived
-  command persists null.
-- The existing telemetry ingestion, hysteresis, command idempotency, delivery
-  and acknowledgement path remains the only automation path.
-- The Cloud ↔ Edge v1 command envelope remains agronomy-agnostic and carries no
-  RuntimeTarget field.
+## Why it was reverted
 
-## Consequences
+The precedence rule was correct for the milestone it belonged to and wrong for
+the product that follows it. The next step is a basil growing journal with
+sensor monitoring, whose only planned automated function is a lighting
+photoperiod. A recipe-driven temperature target executed by a fan is neither
+part of that step nor a prerequisite for it, and keeping it would have meant
+carrying an agronomy catalog, a cycle lifecycle and a second executable source
+of the same band through a milestone that uses none of them.
 
-The cloud can prove which RuntimeTarget snapshot produced an executed
-temperature decision, including after its GrowCycle closes. Existing
-installations without an active target retain their current behavior. Legacy
-thresholds remain duplicated as a temporary compatibility fallback; removing
-them is deferred.
-
-This decision does not introduce a generic policy engine. Multiple policies,
-safety constraints, manual overrides, and shared-zone target merging remain
-future decisions.
+The rollback removes scope. It does not overturn the reasoning: if
+recipe-driven targets return, this record is the argument they would start from
+and ADR 0002 states what they would have to replace.
